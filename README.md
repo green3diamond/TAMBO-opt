@@ -49,7 +49,13 @@ pre-commit install
 This will automatically format your code when you create a git commit.
 
 ### 3. Download datasets
-The full datasets will appear on Zenodo soon. For now, you can run a very short training on a small dummy dataset:
+The full datasets is available on Zenodo. To download the full dataset (c.a. 77 GB), run:
+```bash
+mkdir data
+curl -o data/showers.h5 https://zenodo.org/records/18020348/files/geant4.h5?download=1
+```
+
+You can also download a small dummy dataset for testing purposes instead:
 ```bash
 mkdir data
 curl -o data/showers.h5 https://syncandshare.desy.de/public.php/dav/files/tCMX2mFexPpmZC4
@@ -62,9 +68,11 @@ export HDF5_USE_FILE_LOCKING=FALSE
 # run OT matching
 python allshowers/OT_match.py conf/transformer.yaml
 ```
-The latent points will be stored in the same h5 file. Preprocessing and data file path will be read from the config file.
+The latent points will be stored in the same h5 file. Preprocessing and data file path will be read from the config file. If preprocessing transformations or data path change, you need to re-run the OT matching.
 
-### 4. Run tests
+If you do not want to use OT matched latent points, you need to set `return_noise: False` in the data section of the config file. Some of the unit tests will fail if you do not compute OT matched latent points first.
+
+### 4. Run tests (optional)
 Now you can run the unit tests to check that everything is working correctly:
 ```bash
 python -m unittest discover -s test -p "*_test.py" -v
