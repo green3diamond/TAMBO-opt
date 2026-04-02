@@ -5,15 +5,9 @@ mkresultdir_pointcloudfm.py
 Creates a result directory for the pointcloud FM trainer, writes:
   - conf.yaml   (copied params for this run)
   - run.sh      (sbatch script)
-  - script.sh   (worker script run via srun)
+  - script.sh   (worker script run directly via bash)
 
-Launch strategy (no torchrun / no c10d TCPStore):
-  - srun launches ONE task PER GPU across all nodes
-  - each task is one Python process bound to its GPU via SLURM_LOCALID
-  - PyTorch distributed is initialized with init_method="env://"
-    using MASTER_ADDR, MASTER_PORT, WORLD_SIZE, RANK set from SLURM env vars
-  - NO torchrun, NO c10d rendezvous server, NO open listening port needed
-  - MASTER_ADDR is resolved to IPv4 to avoid errno-97 IPv6 issues
+Single-GPU trainer — no srun, no distributed setup needed.
 
 SLURM partitions:
   -p gpu                          (A100)
@@ -21,14 +15,14 @@ SLURM partitions:
   -p arguelles_delgado_gpu_mixed  (A100 80GB GRES)
 
 Example:
-python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/transformer.yaml \
-  -p gpu -g 1 -n 4 --mem 50G --cpus-per-task 2 --time 02:00:00 -r
+python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/pointcloudfm.yaml \
+  -p gpu --mem 50G --cpus-per-task 2 --time 02:00:00 -r
 
-python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/transformer.yaml \
-  -p arguelles_delgado_gpu_mixed -g 1 -n 1 --mem 100G --cpus-per-task 2 --time 00:20:00 -r
+python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/pointcloudfm.yaml \
+  -p arguelles_delgado_gpu_mixed --mem 100G --cpus-per-task 2 --time 00:20:00 -r
 
-python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/transformer_time.yaml \
-  -p gpu_requeue -g 1 -n 4 --mem 200G --cpus-per-task 1 --time 24:00:00 -r
+python /n/home04/hhanif/AllShowers/mkresultdir_pointcloudfm.py /n/home04/hhanif/AllShowers/conf/pointcloudfm.yaml \
+  -p gpu_requeue --mem 200G --cpus-per-task 1 --time 24:00:00 -r
 
 """
 
@@ -49,7 +43,7 @@ JOB_SCRIPT_TEMPLATE = """\
 #SBATCH --time={time_limit:s}
 #SBATCH -p {partition:s}
 {gres_line:s}
-#SBATCH --nodes={num_nodes:d}
+#SBATCH --ntasks=1
 #SBATCH --output={result_path:s}/log/train_%j.out
 #SBATCH --error={result_path:s}/log/train_%j.err
 {mail_lines:s}
@@ -58,13 +52,7 @@ echo "job id: $SLURM_JOB_ID"
 echo "node list: $SLURM_JOB_NODELIST"
 echo ""
 
-# Launch one task per GPU across all nodes.
-# script.sh is a plain python process - no torchrun, no rendezvous port needed.
-srun \
-  --nodes={num_nodes:d} \
-  --ntasks-per-node={num_gpus:d} \
-  --kill-on-bad-exit=1 \
-  bash {result_path:s}/script.sh
+bash {result_path:s}/script.sh
 """
 
 
@@ -81,43 +69,16 @@ mamba config set changeps1 False
 mamba activate {mamba_env:s}
 # ====================================
 
-# ---------------------------------------------------------------------------
-# Distributed setup via SLURM env vars - no torchrun / no c10d TCPStore.
-# PyTorch uses init_method="env://" which reads these variables directly.
-# This avoids any listening port / firewall issues entirely.
-# ---------------------------------------------------------------------------
-
-# Resolve master hostname to IPv4 to avoid errno-97 (AF not supported)
-_MASTER_HOSTNAME=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_ADDR=$(python3 -c "
-import socket
-print(socket.getaddrinfo('$_MASTER_HOSTNAME', None, socket.AF_INET)[0][4][0])
-")
-
-export MASTER_PORT=$(( 20000 + (SLURM_JOB_ID % 10000) ))
-export WORLD_SIZE=$SLURM_NTASKS      # total processes = nodes * gpus_per_node
-export RANK=$SLURM_PROCID            # global rank of this process
-export LOCAL_RANK=$SLURM_LOCALID     # local rank within this node (= GPU index)
-
-# Disable IPv6 everywhere just in case
-export GLOO_USE_IPV6=0
-export NCCL_SOCKET_IFNAME=^lo,docker0
-export GLOO_SOCKET_IFNAME=^lo,docker0
-
 # Threading
 num_cpus=$(nproc --all)
-num_gpus=$(nvidia-smi -L | wc -l)
-export OMP_NUM_THREADS=$(( num_cpus / num_gpus ))
+export OMP_NUM_THREADS=$num_cpus
 if [ "$OMP_NUM_THREADS" -lt 1 ]; then
   export OMP_NUM_THREADS=1
 fi
 
 echo "node:        $(uname -n)"
-echo "rank:        $RANK / $WORLD_SIZE"
-echo "local_rank:  $LOCAL_RANK"
-echo "master:      $MASTER_ADDR:$MASTER_PORT  (resolved from $_MASTER_HOSTNAME)"
 echo "num CPUs:    $num_cpus"
-echo "num GPUs:    $num_gpus"
+nvidia-smi -L || true
 grep MemTotal /proc/meminfo || true
 
 echo ""
@@ -146,9 +107,6 @@ def get_args() -> argparse.Namespace:
         default="gpu",
         help='SLURM partition: "gpu" (A100), "gpu_h200" (H200), or "arguelles_delgado_gpu_mixed" (A100 80GB GRES).',
     )
-
-    p.add_argument("-g", "--num_gpu", type=int, default=1, help="GPUs per node. Default: 1")
-    p.add_argument("-n", "--num_nodes", type=int, default=1, help="Number of nodes. Default: 1")
 
     p.add_argument("--mem", type=str, default="300G", help='Memory request. Default: "300G"')
     p.add_argument("--cpus-per-task", type=int, default=4, help="CPUs per task. Default: 4")
@@ -213,7 +171,7 @@ def main() -> None:
     if args.partition == "arguelles_delgado_gpu_mixed":
         gres_line = "#SBATCH --gres=gpu:nvidia_a100-sxm4-80gb:1"
     else:
-        gres_line = f"#SBATCH --gres=gpu:{args.num_gpu}"
+        gres_line = "#SBATCH --gres=gpu:1"
 
     # Write run.sh (sbatch)
     job_script = JOB_SCRIPT_TEMPLATE.format(
@@ -223,8 +181,6 @@ def main() -> None:
         time_limit=args.time,
         partition=args.partition,
         gres_line=gres_line,
-        num_nodes=args.num_nodes,
-        num_gpus=args.num_gpu,
         result_path=str(result_path),
         mail_lines=mail_lines.rstrip("\n"),
     )
