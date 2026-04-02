@@ -113,7 +113,19 @@ def load_data(
         max_points=max_num_points,
     )
     if return_noise:
+        import numpy as np
+
         noise, _ = showerdata.load_target(path, "target", start=start, stop=stop)
+        target_pts = showers.points.shape[1]
+        n_pts = noise.shape[1]
+        if n_pts > target_pts:
+            noise = noise[:, :target_pts, :]
+        elif n_pts < target_pts:
+            pad = np.zeros(
+                (noise.shape[0], target_pts - n_pts, noise.shape[2]),
+                dtype=noise.dtype,
+            )
+            noise = np.concatenate([noise, pad], axis=1)
     else:
         noise = None
 

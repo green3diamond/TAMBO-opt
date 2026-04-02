@@ -29,7 +29,7 @@ python /n/home04/hhanif/AllShowers/mkresultdir.py /n/home04/hhanif/AllShowers/co
 
 
 python /n/home04/hhanif/AllShowers/mkresultdir.py /n/home04/hhanif/AllShowers/conf/transformer_time.yaml \
-  -p gpu -g 1 -n 1 --mem 100G --cpus-per-task 2 --time 06:00:00 -r
+  -p gpu_requeue -g 1 -n 4 --mem 200G --cpus-per-task 1 --time 24:00:00 -r
 
 """
 
@@ -95,7 +95,7 @@ import socket
 print(socket.getaddrinfo('$_MASTER_HOSTNAME', None, socket.AF_INET)[0][4][0])
 ")
 
-export MASTER_PORT={master_port:d}
+export MASTER_PORT=$(( 20000 + (SLURM_JOB_ID % 10000) ))
 export WORLD_SIZE=$SLURM_NTASKS      # total processes = nodes * gpus_per_node
 export RANK=$SLURM_PROCID            # global rank of this process
 export LOCAL_RANK=$SLURM_LOCALID     # local rank within this node (= GPU index)
@@ -157,7 +157,7 @@ def get_args() -> argparse.Namespace:
     p.add_argument(
         "-p",
         "--partition",
-        choices=["gpu", "gpu_h200", "arguelles_delgado_gpu_mixed"],
+        choices=["gpu", "gpu_requeue","gpu_h200", "arguelles_delgado_gpu_mixed"],
         default="gpu",
         help='SLURM partition: "gpu" (A100), "gpu_h200" (H200), or "arguelles_delgado_gpu_mixed" (A100 80GB GRES).',
     )
@@ -169,12 +169,7 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--cpus-per-task", type=int, default=4, help="CPUs per task. Default: 4")
     p.add_argument("--time", type=str, default="2-00:00:00", help='Time limit. Default: "2-00:00:00"')
 
-    p.add_argument(
-        "--master-port",
-        type=int,
-        default=29500,
-        help="MASTER_PORT for env:// init. Only needs to be free on the master node. Default: 29500",
-    )
+
 
     p.add_argument(
         "--mamba-env",
@@ -259,7 +254,6 @@ def main() -> None:
     worker_script = WORKER_SCRIPT_TEMPLATE.format(
         repo_path=str(repo_path),
         mamba_env=args.mamba_env,
-        master_port=args.master_port,
         config_rel=config_rel,
     )
 
