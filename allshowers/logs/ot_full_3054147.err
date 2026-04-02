@@ -1,0 +1,2 @@
+/var/slurmd/spool/slurmd/job3054147/slurm_script: line 18: 1718758 Killed                  python /n/home04/hhanif/AllShowers/allshowers/OT_match.py /n/home04/hhanif/AllShowers/conf/transformer_time.yaml --with-time
+[2026-04-01T16:59:10.330] error: Detected 1 oom_kill event in StepId=3054147.batch. Some of the step tasks have been OOM Killed.

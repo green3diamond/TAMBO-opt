@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/n/home04/hhanif/AllShowers/allshowers/OT_match.py", line 282, in <module>
+    main()
+  File "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tamboOpt_env/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home04/hhanif/AllShowers/allshowers/OT_match.py", line 267, in main
+    pre_processor = PreProcessor(parsed_args.file, with_time=parsed_args.with_time)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home04/hhanif/AllShowers/allshowers/OT_match.py", line 102, in __init__
+    x=showers[:, :, 4],
+      ~~~~~~~^^^^^^^^^
+IndexError: index 4 is out of bounds for dimension 2 with size 4

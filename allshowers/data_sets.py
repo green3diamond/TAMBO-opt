@@ -41,6 +41,7 @@ def initialise_trafos(
     samples_energy_trafo: Transformation,
     samples_coordinate_trafo: Transformation,
     cond_trafo: Transformation,
+    samples_time_trafo: Transformation | None = None,   # ADD: optional time trafo
     *,
     trafos_file: str = "",
     rank: int = 0,
@@ -62,6 +63,9 @@ def initialise_trafos(
         samples_energy_trafo.load_state_dict(parameters["samples_energy_trafo"])
         samples_coordinate_trafo.load_state_dict(parameters["samples_coordinate_trafo"])
         cond_trafo.load_state_dict(parameters["cond_trafo"])
+        # Load time trafo state if present in the saved file
+        if samples_time_trafo is not None and "samples_time_trafo" in parameters:
+            samples_time_trafo.load_state_dict(parameters["samples_time_trafo"])
         print(f"[rank {rank}] Loaded transformations from {trafos_file}")
     else:
         if rank != 0:
@@ -74,12 +78,18 @@ def initialise_trafos(
         cond_trafo.fit(energies_l)
         samples_coordinate_trafo.fit(showers_l[:, :, :2], mask_l)
         samples_energy_trafo.fit(showers_l[:, :, 3], mask_l.squeeze())
+        # Fit time trafo on col 4 if provided
+        if samples_time_trafo is not None:
+            samples_time_trafo.fit(showers_l[:, :, 4], mask_l.squeeze())
         if trafos_file:
             parameters = {
                 "samples_energy_trafo": samples_energy_trafo.state_dict(),
                 "samples_coordinate_trafo": samples_coordinate_trafo.state_dict(),
                 "cond_trafo": cond_trafo.state_dict(),
             }
+            # Save time trafo state alongside the others
+            if samples_time_trafo is not None:
+                parameters["samples_time_trafo"] = samples_time_trafo.state_dict()
             torch.save(parameters, trafos_file)
             print(f"[rank {rank}] Saved transformations to {trafos_file}")
         if world_size > 1:
@@ -94,6 +104,7 @@ def load_data(
     stop: int | None = None,
     return_noise: bool = False,
     max_num_points: int | None = None,
+    with_time: bool = False,    # ADD: controls whether col 4 (time) is kept
 ) -> ShowerDict:
     showers = showerdata.load(
         path,
@@ -105,8 +116,20 @@ def load_data(
         noise, _ = showerdata.load_target(path, "target", start=start, stop=stop)
     else:
         noise = None
-    if showers.points.shape[2] == 5:
-        showers.points = showers.points[:, :, :4]
+
+    if with_time:
+        # Keep all 5 columns: x, y, z, e, t
+        if showers.points.shape[2] < 5:
+            raise ValueError(
+                f"with_time=True requires data with 5 columns (x, y, z, e, t), "
+                f"but file has shape {showers.points.shape}."
+            )
+        # No truncation — keep col 4 (time)
+    else:
+        # Original behaviour: drop col 4 if present
+        if showers.points.shape[2] == 5:
+            showers.points = showers.points[:, :, :4]
+
     data = ShowerDict(
         shower=torch.from_numpy(showers.points),
         energy=torch.from_numpy(showers.energies),
@@ -152,6 +175,7 @@ def load_and_prepare(
     samples_energy_trafo: Transformation = Identity(),
     samples_coordinate_trafo: Transformation = Identity(),
     cond_trafo: Transformation = Identity(),
+    samples_time_trafo: Transformation | None = None,   # ADD: None = original mode
     start: int = 0,
     stop: int | None = None,
     return_noise: bool = False,
@@ -164,13 +188,18 @@ def load_and_prepare(
     world_size: int = 1,
     local_rank: int = 0,
 ) -> ModelInputDict:
+    with_time = samples_time_trafo is not None
+
     data = load_data(
         path,
         start=start,
         stop=stop,
         return_noise=return_noise,
         max_num_points=max_num_points,
+        with_time=with_time,
     )
+
+    # Mask is always based on energy (col 3) regardless of time
     mask = data["shower"][:, :, [3]] > 0
 
     if do_initialise_trafos:
@@ -181,6 +210,7 @@ def load_and_prepare(
             samples_energy_trafo,
             samples_coordinate_trafo,
             cond_trafo,
+            samples_time_trafo,            # passed through; None in original mode
             trafos_file=trafos_file,
             rank=rank,
             world_size=world_size,
@@ -188,14 +218,29 @@ def load_and_prepare(
         )
 
     energy = cond_trafo(data["energy"])
-    x = torch.concat(
-        [
-            samples_coordinate_trafo(data["shower"][:, :, :2]),
-            samples_energy_trafo(data["shower"][:, :, [3]]),
-        ],
-        dim=-1,
-    )
-    x[~mask.repeat(1, 1, 3)] = 0.0
+
+    if with_time:
+        # 4 features: x, y, e, t   (z/layer stored separately)
+        x = torch.concat(
+            [
+                samples_coordinate_trafo(data["shower"][:, :, :2]),     # x, y
+                samples_energy_trafo(data["shower"][:, :, [3]]),         # e
+                samples_time_trafo(data["shower"][:, :, [4]]),           # t
+            ],
+            dim=-1,
+        )
+        x[~mask.repeat(1, 1, 4)] = 0.0
+    else:
+        # Original: 3 features: x, y, e
+        x = torch.concat(
+            [
+                samples_coordinate_trafo(data["shower"][:, :, :2]),
+                samples_energy_trafo(data["shower"][:, :, [3]]),
+            ],
+            dim=-1,
+        )
+        x[~mask.repeat(1, 1, 3)] = 0.0
+
     layer = (data["shower"][:, :, [2]] + 0.1).long()
     num_points = batched_histogram(
         data=layer.squeeze(dim=-1),
@@ -245,6 +290,7 @@ def get_data_loaders(
     else:
         val_len = data_len // 10
     split = data_len - val_len
+
     if "samples_energy_trafo" in config_dataset:
         config_dataset["samples_energy_trafo"] = compose(
             config_dataset["samples_energy_trafo"]
@@ -255,6 +301,11 @@ def get_data_loaders(
         )
     if "cond_trafo" in config_dataset:
         config_dataset["cond_trafo"] = compose(config_dataset["cond_trafo"])
+    # Wire up time trafo from config if present; otherwise stays absent (original mode)
+    if "samples_time_trafo" in config_dataset:
+        config_dataset["samples_time_trafo"] = compose(
+            config_dataset["samples_time_trafo"]
+        )
 
     start = rank * (split // world_size)
     stop = (rank + 1) * (split // world_size)
@@ -305,11 +356,16 @@ def get_data_loaders(
             drop_last=False,
             shuffle=False,
         )
+
     trafos = {
         "samples_energy_trafo": config_dataset.get("samples_energy_trafo", Identity()),
         "samples_coordinate_trafo": config_dataset.get(
             "samples_coordinate_trafo", Identity()
         ),
         "cond_trafo": config_dataset.get("cond_trafo", Identity()),
+        # Included only when present; generator.py can check with .get()
+        **({
+            "samples_time_trafo": config_dataset["samples_time_trafo"]
+        } if "samples_time_trafo" in config_dataset else {}),
     }
     return loader_train, loader_test, trafos

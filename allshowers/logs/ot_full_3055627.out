@@ -1,0 +1,2 @@
+[ 0.07s] Parsing arguments: Namespace(file='/n/home04/hhanif/AllShowers/conf/transformer_time.yaml', with_time=True)
+[ 0.07s] Mode: with time (x, y, e, t)
