@@ -114,6 +114,8 @@ def load_data(
     )
     if return_noise:
         noise, _ = showerdata.load_target(path, "target", start=start, stop=stop)
+        if max_num_points is not None:
+            noise = noise[:, :max_num_points, :]
     else:
         noise = None
 
