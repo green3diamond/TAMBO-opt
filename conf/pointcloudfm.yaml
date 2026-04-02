@@ -1,4 +1,4 @@
-name: Electron-PointCountFM
+run_name: Electron-PointCountFM
 
 data:
   data_file: /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/combined_electrons_balanced_for_pointcloud.h5

@@ -734,7 +734,7 @@ def main(args: list | None = None) -> None:
         result_dir = config["result_path"]
     else:
         result_dir = setup_result_path(
-            config["name"], parsed_args.config, parsed_args.fast_dev_run
+            config["run_name"], parsed_args.config, parsed_args.fast_dev_run
         )
     num_new_samples = config["training"].get("num_new_samples", 50_000)
     if parsed_args.fast_dev_run:

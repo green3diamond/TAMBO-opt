@@ -182,7 +182,7 @@ def main() -> None:
         params = yaml.load(f, Loader=yaml.FullLoader)
 
     # Create result_path using pointcountfm's helper
-    params["result_path"] = setup_result_path(params["name"], args.param_file)
+    params["result_path"] = setup_result_path(params["run_name"], args.param_file)
     result_path = Path(params["result_path"])
 
     # Create subdirs
@@ -217,7 +217,7 @@ def main() -> None:
 
     # Write run.sh (sbatch)
     job_script = JOB_SCRIPT_TEMPLATE.format(
-        name=params.get("name", "pointcloudfm"),
+        name=params.get("run_name", "pointcloudfm"),
         mem=args.mem,
         cpus_per_task=args.cpus_per_task,
         time_limit=args.time,
