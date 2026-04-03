@@ -1,9 +1,0 @@
-[KeOps] Warning : CUDA libraries not found or could not be loaded; Switching to CPU only.
-[ 0.11s] Parsing arguments: Namespace(file='/n/home04/hhanif/AllShowers/conf/transformer_time.yaml', with_time=True)
-[ 0.11s] Mode: with time (x, y, e, t)
-[ 281.50s] PreProcessor initialized.
-[ 281.66s] Processing file
-[ 281.67s] batch size: 128
-[ 281.67s] number of batches: 5704
-[ 281.67s] num features: 4  (x, y, e, t)
-[ 281.77s] NoiseMatcher initialized. (noise shape=(730000, 4, 2000))

@@ -1,3 +1,0 @@
-[KeOps] Warning : CUDA libraries not found or could not be loaded; Switching to CPU only.
-[ 0.06s] Parsing arguments: Namespace(file='/n/home04/hhanif/AllShowers/conf/transformer_time.yaml', with_time=True)
-[ 0.06s] Mode: with time (x, y, e, t)

@@ -1,9 +1,0 @@
-[KeOps] Warning : CUDA libraries not found or could not be loaded; Switching to CPU only.
-[ 0.06s] Parsing arguments: Namespace(file='/n/home04/hhanif/AllShowers/conf/transformer.yaml')
-[ 136.02s] PreProcessor initialized.
-[ 136.02s] Processing file
-[ 136.02s] batch size: 1024
-[ 136.02s] number of batches: 484
-[ 136.02s] NoiseMatcher initialized. (noise shape=(495611, 3, 2556))
-[ 591.08s] All batches processed.
-[ 618.33s] Noise saved successfully to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations/all_shower_processed_step1_v5/merged_all_showers2.h5 (shape=(495611, 2556, 3)).
