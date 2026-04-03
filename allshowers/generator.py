@@ -11,13 +11,13 @@ python /n/home04/hhanif/AllShowers/allshowers/generator.py \
 
 # With time (model trained with samples_time_trafo in config):
 python /n/home04/hhanif/AllShowers/allshowers/generator.py \
-  --run-dir /n/home04/hhanif/AllShowers/results/20260305_141348_CNF-Transformer-time \
-  --num-samples 1000 \
+  --run-dir /n/home04/hhanif/AllShowers/results/20260402_150113_CNF-Transformer \
+  --num-samples 10000 \
   --num-timesteps 16 \
   --device cuda:0 \
   --solver midpoint \
-  --cond_file /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations/all_shower_processed_step1_with_bins_256_with_time/merged_all_showers_test_data_with_num_points.h5 \
-    --pdgs 11 211 -11 111 -211
+  --cond_file /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/combined_electrons_balanced-test-file_data_with_num_points.h5 \
+    --pdgs 0 1
 
 '''
 

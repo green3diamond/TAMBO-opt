@@ -6,7 +6,7 @@ python /n/home04/hhanif/AllShowers/allshowers/add_num_points_per_layer.py \
   --num-layers 24
 
 python /n/home04/hhanif/AllShowers/allshowers/add_num_points_per_layer.py \
-  --input /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations/all_shower_processed_step1_with_bins_256_with_time/merged_all_showers_test.h5 \
+  --input /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/combined_electrons_balanced-test-file.h5  \
   --num-layers 24 --with-time
 '''
 

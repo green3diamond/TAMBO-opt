@@ -202,7 +202,7 @@ class NoiseMatcher:
                     )
                     wa = np.ones(N) / N
                     wb = np.ones(N) / N
-                    T = ot.emd(wa, wb, M)
+                    T = ot.emd(wa, wb, M,numItermax=1_000_000)
                     noise_j = N * (T @ noise_j)
 
                     noise[j].T[mask_local[j].repeat(F).reshape(-1, F)] = (
@@ -218,7 +218,7 @@ def process_file(
     data_file,
     data_shape: tuple[int, ...],
     pre_processor: PreProcessor,
-    batch_size: int = 1024,
+    batch_size: int = 128,
 ) -> None:
     F = pre_processor.num_features
     num_batches = -(-data_shape[0] // batch_size)
