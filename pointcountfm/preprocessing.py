@@ -156,7 +156,7 @@ class Dequantize(Transformation):
         super().__init__()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + torch.rand_like(x)
+        return x.float() + torch.rand_like(x.float())
 
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
         return torch.floor(x)
