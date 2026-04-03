@@ -52,7 +52,9 @@ class ConcatSquash(nn.Module):
         ) -> None:
             super().__init__()
             self.cond_embed = nn.Sequential(
-                nn.Linear(dim_cond, dim_input),
+                nn.Linear(dim_cond, dim_cond * 2),
+                activation(),
+                nn.Linear(dim_cond * 2, dim_input),
             )
             self.network = nn.Sequential(
                 nn.Linear(dim_input, dim_output),
