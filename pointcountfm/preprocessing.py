@@ -159,7 +159,7 @@ class Dequantize(Transformation):
         return x.float() + torch.rand_like(x.float())
 
     def inverse(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.floor(x)
+        return torch.floor(x).long()
 
 
 def compose(transformation: list[list[str | dict | list | None]] | None) -> Sequence:
