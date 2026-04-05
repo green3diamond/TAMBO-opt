@@ -4,7 +4,7 @@ Trainer for the reconstruction flow-matching model.
 Conditions on per-particle-type layer observables
 (num_points, energy, time per layer for electron/muon/photon).
 
-Generates: directions (3D) + pdg label (1D) = 4D output.
+Generates: directions (3D) + pdg label (1D) + energy (1D) = 5D output.
 """
 
 import argparse
@@ -46,7 +46,7 @@ class Trainer:
         data_config["device"] = self.device
         self.train_loader, self.val_loader = get_loaders(**data_config)
         self.data_config = data_config
-        self.dim_data = self.train_loader.data.shape[1]    # 4: directions(3) + pdg(1)
+        self.dim_data = self.train_loader.data.shape[1]    # 5: directions(3) + pdg(1) + energy(1)
         self.dim_condition = self.train_loader.condition.shape[1]
         self.steps = training_config.get("steps", 50)
 
@@ -97,7 +97,7 @@ class Trainer:
         print(f"Device: {self.device}")
         print(f"num_train: {self.train_loader.data.shape[0]}")
         print(f"num_val: {self.val_loader.data.shape[0]}")
-        print(f"dim_data (directions+pdg): {self.dim_data}")
+        print(f"dim_data (directions+pdg+energy): {self.dim_data}")
         print(f"dim_condition: {self.dim_condition}")
         print(f"condition_features: {self.train_loader.condition_features}")
         print(
@@ -391,15 +391,17 @@ class Trainer:
             num_steps=num_steps,
             distilled=distilled,
         )
-        # samples shape: (N, 4) -> directions(3) + pdg(1)
+        # samples shape: (N, 5) -> directions(3) + pdg(1) + energy(1)
         directions = samples[:, :3]
-        pdg_pred = samples[:, 3:]
+        pdg_pred = samples[:, 3:4]
+        energy_pred = samples[:, 4:]
         file_path = (
             self.new_samples_path_distilled if distilled else self.new_samples_path
         )
         with h5py.File(file_path, "w") as file:
             file.create_dataset("directions", data=directions.numpy())
             file.create_dataset("pdg", data=pdg_pred.numpy())
+            file.create_dataset("energy", data=energy_pred.numpy())
             file.create_dataset("condition", data=condition.numpy())
             if save_noise:
                 file.create_dataset("noise", data=noise.numpy())

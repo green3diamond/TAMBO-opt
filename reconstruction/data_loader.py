@@ -3,20 +3,19 @@ Data loader for the reconstruction model.
 
 Loads a combined HDF5 file (produced by util/dataset_for_reconstruction.py)
 and builds:
-  - data   : directions (3) concatenated with label (1)  -> shape (N, 4)
+  - data   : directions (3) + pdg label (1) + energy (1)  -> shape (N, 5)
   - condition : selected per-particle-type layer observables  -> shape (N, D_cond)
 
-The ``condition_features`` config list controls which per-particle-type
-observables are included and in what order.  Each entry is a dataset name
-suffix; the loader will look for ``<suffix>_electron``, ``<suffix>_muon``,
-``<suffix>_photon`` in the HDF5 file.
+The ``condition_features`` config list controls which observables are included
+and in what order.  Each entry is an exact HDF5 dataset key
+(e.g. ``energy_per_layer_electron``).
 
 Example ``condition_features``:
-  - num_points_per_layer
-  - energy_per_layer
-  - time_per_layer
+  - energy_per_layer_electron
+  - num_points_per_layer_electron
+  - time_per_layer_electron
 
-This would yield D_cond = 3 * 3 * num_layers  (3 features x 3 particles x L).
+This would yield D_cond = 3 * num_layers  (3 features × 24 layers = 72).
 """
 
 import os
@@ -26,16 +25,21 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from reconstruction.preprocessing import Identity, Transformation, compose
+from reconstruction.preprocessing import (
+    Identity,
+    SplitTransform,
+    Transformation,
+    compose,
+)
 
 
 PARTICLE_TYPES = ["electron", "muon", "photon"]
 
-# Default list of per-layer observable keys (without particle suffix)
+# Default list of condition feature HDF5 keys
 DEFAULT_CONDITION_FEATURES = [
-    "num_points_per_layer",
-    "energy_per_layer",
-    "time_per_layer",
+    "energy_per_layer_electron",
+    "num_points_per_layer_electron",
+    "time_per_layer_electron",
 ]
 
 
@@ -66,8 +70,8 @@ def load_data_file(
 
     Returns:
         (target, condition) where
-        target    = [directions(3), label(1)]   shape (N, 4)
-        condition = concatenated per-particle-type observables  shape (N, D)
+        target    = [directions(3), label(1), energy(1)]   shape (N, 5)
+        condition = concatenated condition features         shape (N, D)
     """
     if condition_features is None:
         condition_features = DEFAULT_CONDITION_FEATURES
@@ -75,20 +79,40 @@ def load_data_file(
     with h5py.File(data_file, "r") as file:
         directions = load_dataset(file, "directions", start, end)  # (N, 3)
         labels = load_dataset(file, "labels", start, end)          # (N,)
+        energies = load_dataset(file, "energies", start, end)      # (N,)
 
         cond_parts: list[Tensor] = []
         for feat in condition_features:
-            for ptype in PARTICLE_TYPES:
-                key = f"{feat}_{ptype}"
-                cond_parts.append(load_dataset(file, key, start, end))
+            cond_parts.append(load_dataset(file, feat, start, end))
 
-    # Target: directions + label (as float for flow matching)
+    # Target: directions + label + energy (all as float for flow matching)
     labels_float = labels.to(torch.get_default_dtype()).unsqueeze(-1)
-    target = torch.cat([directions, labels_float], dim=-1)  # (N, 4)
+    energies_float = energies.to(torch.get_default_dtype()).unsqueeze(-1)
+    target = torch.cat([directions, labels_float, energies_float], dim=-1)  # (N, 5)
 
     condition = torch.cat(cond_parts, dim=-1)  # (N, D_cond)
 
     return target, condition
+
+
+def build_data_transform(
+    transform_directions: list | None = None,
+    transform_pdg: list | None = None,
+    transform_energy: list | None = None,
+) -> Transformation:
+    """Build a SplitTransform that applies separate transforms to each target component.
+
+    Target layout: [directions(3), pdg(1), energy(1)] = 5D
+    """
+    dir_trafo = compose(transform_directions) if transform_directions else compose(None)
+    pdg_trafo = compose(transform_pdg) if transform_pdg else compose(None)
+    energy_trafo = compose(transform_energy) if transform_energy else compose(None)
+
+    return SplitTransform([
+        (3, dir_trafo),    # directions
+        (1, pdg_trafo),    # pdg label
+        (1, energy_trafo), # energy
+    ])
 
 
 class DataLoader:
@@ -98,6 +122,9 @@ class DataLoader:
         condition_features: list[str] | None = None,
         transform_data: Transformation | list | None = None,
         transform_condition: Transformation | list | None = None,
+        transform_directions: list | None = None,
+        transform_pdg: list | None = None,
+        transform_energy: list | None = None,
         batch_size: int = 1,
         shuffle: bool = False,
         start: int = 0,
@@ -106,11 +133,20 @@ class DataLoader:
         device: torch.device | str = "cpu",
     ) -> None:
         self.data_file = data_file
-        self.transform_data = self.__compose_trafo(transform_data)
-        self.transform_condition = self.__compose_trafo(transform_condition)
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.condition_features = condition_features or DEFAULT_CONDITION_FEATURES
+
+        # Build data transform: prefer per-component transforms if provided,
+        # otherwise fall back to the single transform_data for backwards compat.
+        if any(t is not None for t in [transform_directions, transform_pdg, transform_energy]):
+            self.transform_data = build_data_transform(
+                transform_directions, transform_pdg, transform_energy
+            )
+        else:
+            self.transform_data = self.__compose_trafo(transform_data)
+
+        self.transform_condition = self.__compose_trafo(transform_condition)
 
         target, condition = load_data_file(
             data_file,
@@ -130,7 +166,7 @@ class DataLoader:
             target = self.transform_data(target)
             condition = self.transform_condition(condition)
 
-        self.data = target          # (N, 4)  directions + pdg label
+        self.data = target          # (N, 5)  directions + pdg + energy
         self.condition = condition   # (N, D_cond)
 
     @staticmethod
@@ -169,6 +205,9 @@ def get_loaders(
     condition_features: list[str] | None = None,
     transform_data: Transformation | list | None = None,
     transform_condition: Transformation | list | None = None,
+    transform_directions: list | None = None,
+    transform_pdg: list | None = None,
+    transform_energy: list | None = None,
     batch_size: int = 128,
     batch_size_val: int | None = None,
     device: torch.device | str = "cpu",
@@ -184,6 +223,9 @@ def get_loaders(
         condition_features=condition_features,
         transform_data=transform_data,
         transform_condition=transform_condition,
+        transform_directions=transform_directions,
+        transform_pdg=transform_pdg,
+        transform_energy=transform_energy,
         batch_size=batch_size,
         shuffle=True,
         start=0,

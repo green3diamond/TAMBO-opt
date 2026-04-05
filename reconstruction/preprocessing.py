@@ -6,6 +6,7 @@ from torch import nn
 __all__ = [
     "Transformation",
     "Sequence",
+    "SplitTransform",
     "Identity",
     "Log",
     "LogIt",
@@ -56,6 +57,37 @@ class Sequence(Transformation):
             else:
                 raise ValueError("All sub-modules must be of type Transformation")
         return x
+
+
+class SplitTransform(Transformation):
+    """Apply different transforms to different slices of the last dimension.
+
+    Parameters
+    ----------
+    splits : list of (num_dims, Transformation) pairs.
+        ``num_dims`` is the width of the slice along dim=-1,
+        and the Transformation is applied independently to that slice.
+    """
+
+    def __init__(self, splits: list[tuple[int, Transformation]]) -> None:
+        super().__init__()
+        self.split_sizes = [s for s, _ in splits]
+        self.transforms = nn.ModuleList([t for _, t in splits])
+
+    def fit(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        parts = x.split(self.split_sizes, dim=-1)
+        fitted = [t.fit(p, mask) for t, p in zip(self.transforms, parts)]
+        return torch.cat(fitted, dim=-1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        parts = x.split(self.split_sizes, dim=-1)
+        transformed = [t(p) for t, p in zip(self.transforms, parts)]
+        return torch.cat(transformed, dim=-1)
+
+    def inverse(self, x: torch.Tensor) -> torch.Tensor:
+        parts = x.split(self.split_sizes, dim=-1)
+        inversed = [t.inverse(p) for t, p in zip(self.transforms, parts)]
+        return torch.cat(inversed, dim=-1)
 
 
 class Identity(Transformation):
