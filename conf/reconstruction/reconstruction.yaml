@@ -1,7 +1,7 @@
 run_name: Reconstruction-FM
 
 data:
-  data_file: /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/reconstruction_combined.h5
+  data_file: /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/reconstruction_for_training.h5 
 
   # Customizable: select which HDF5 dataset keys to use as condition features.
   # Each entry is an exact key in the HDF5 file.
@@ -23,7 +23,6 @@ data:
   # PDG label (integer 0/1): dequantize to make continuous, then standardize.
   # Dequantize adds U(0,1) noise: 0->[0,1), 1->[1,2). Inverse uses floor().
   transform_pdg:
-    - [Dequantize]
     - [StandardScaler, {shape: [1, 1]}]
 
   # Energy: log-transform then standardize (same as allshowers energy trafo)
@@ -40,19 +39,26 @@ data:
   num_val: 30000
 
 model:
-  name: ConcatSquash
+  name: FullyConnected
   dim_input: 5             # directions (3) + pdg (1) + energy (1)
   dim_condition: 72        # 3 observables x 1 particle type x 24 layers
-  dim_time: 12
+  dim_time: 18
+  # hidden_dims:
+  #   - 256
+  #   - 512
+  #   - 1024
+  #   - 512
+  #   - 256
   hidden_dims:
+    - 128
     - 256
     - 512
-    - 1024
-    - 512
     - 256
-
+    - 128
+  flow:
+    frequencies: 9
 training:
-  epochs: 500
+  epochs: 1000
   steps: 100
   optimizer:
     name: Adam

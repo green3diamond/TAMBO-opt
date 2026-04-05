@@ -9,8 +9,8 @@ Creates a result directory for the reconstruction FM trainer, writes:
 
 Example:
 
-python mkresultdir_reconstruction.py conf/reconstruction.yaml \
-  -p gpu_requeue -g 1 -n 1 --mem 10G --cpus-per-task 1 --time 2:00:00 -r
+python /n/home04/hhanif/AllShowers/mkresultdir_reconstruction.py /n/home04/hhanif/AllShowers/conf/reconstruction/reconstruction.yaml \
+  -p gpu_requeue -g 1 -n 1 --mem 8G --cpus-per-task 1 --time 2:00:00 -r
 """
 
 import argparse
