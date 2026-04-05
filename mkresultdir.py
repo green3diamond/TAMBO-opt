@@ -54,6 +54,7 @@ JOB_SCRIPT_TEMPLATE = """\
 #SBATCH -p {partition:s}
 {gres_line:s}
 #SBATCH --nodes={num_nodes:d}
+#SBATCH --constraint=a100
 #SBATCH --output={result_path:s}/log/train_%j.out
 #SBATCH --error={result_path:s}/log/train_%j.err
 {mail_lines:s}

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ot_full
-#SBATCH --mem=500G
+#SBATCH --mem=1000G
 #SBATCH --cpus-per-task=100
 #SBATCH --time=6:00:00
 #SBATCH -p serial_requeue
@@ -14,4 +14,4 @@ mamba activate /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tamboOpt_
 
 
 
-python /n/home04/hhanif/AllShowers/allshowers/OT_match.py /n/home04/hhanif/AllShowers/conf/allshowers/allshowers_photons.yaml --with-time
+python /n/home04/hhanif/AllShowers/allshowers/OT_match.py /n/home04/hhanif/AllShowers/conf/allshowers/allshowers_muons.yaml --with-time
