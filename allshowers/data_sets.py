@@ -40,8 +40,8 @@ def initialise_trafos(
     mask: Tensor,
     samples_energy_trafo: Transformation,
     samples_coordinate_trafo: Transformation,
+    samples_time_trafo: Transformation | None,
     cond_trafo: Transformation,
-    samples_time_trafo: Transformation | None = None,   # ADD: optional time trafo
     *,
     trafos_file: str = "",
     rank: int = 0,
@@ -62,32 +62,29 @@ def initialise_trafos(
         parameters = torch.load(trafos_file, weights_only=True)
         samples_energy_trafo.load_state_dict(parameters["samples_energy_trafo"])
         samples_coordinate_trafo.load_state_dict(parameters["samples_coordinate_trafo"])
-        cond_trafo.load_state_dict(parameters["cond_trafo"])
-        # Load time trafo state if present in the saved file
         if samples_time_trafo is not None and "samples_time_trafo" in parameters:
             samples_time_trafo.load_state_dict(parameters["samples_time_trafo"])
+        cond_trafo.load_state_dict(parameters["cond_trafo"])
         print(f"[rank {rank}] Loaded transformations from {trafos_file}")
     else:
         if rank != 0:
             raise RuntimeError(
                 "Initialization of transformations is only allowed for rank 0"
             )
-        energies_l = energies[:100_000]
-        showers_l = showers[:100_000]
-        mask_l = mask[:100_000]
-        cond_trafo.fit(energies_l)
-        samples_coordinate_trafo.fit(showers_l[:, :, :2], mask_l)
-        samples_energy_trafo.fit(showers_l[:, :, 3], mask_l.squeeze())
-        # Fit time trafo on col 4 if provided
+        # Caller is responsible for passing data that spans the full training
+        # distribution (see fit_start/fit_stop in load_and_prepare).
+        print(f"[rank {rank}] Fitting transformations on {len(energies)} showers")
+        cond_trafo.fit(energies)
+        samples_coordinate_trafo.fit(showers[:, :, :2], mask)
+        samples_energy_trafo.fit(showers[:, :, 3], mask.squeeze())
         if samples_time_trafo is not None:
-            samples_time_trafo.fit(showers_l[:, :, 4], mask_l.squeeze())
+            samples_time_trafo.fit(showers[:, :, 4], mask.squeeze())
         if trafos_file:
             parameters = {
                 "samples_energy_trafo": samples_energy_trafo.state_dict(),
                 "samples_coordinate_trafo": samples_coordinate_trafo.state_dict(),
                 "cond_trafo": cond_trafo.state_dict(),
             }
-            # Save time trafo state alongside the others
             if samples_time_trafo is not None:
                 parameters["samples_time_trafo"] = samples_time_trafo.state_dict()
             torch.save(parameters, trafos_file)
@@ -104,7 +101,6 @@ def load_data(
     stop: int | None = None,
     return_noise: bool = False,
     max_num_points: int | None = None,
-    with_time: bool = False,    # ADD: controls whether col 4 (time) is kept
 ) -> ShowerDict:
     showers = showerdata.load(
         path,
@@ -113,35 +109,14 @@ def load_data(
         max_points=max_num_points,
     )
     if return_noise:
-        import numpy as np
-
         noise, _ = showerdata.load_target(path, "target", start=start, stop=stop)
-        target_pts = showers.points.shape[1]
-        n_pts = noise.shape[1]
-        if n_pts > target_pts:
-            noise = noise[:, :target_pts, :]
-        elif n_pts < target_pts:
-            pad = np.zeros(
-                (noise.shape[0], target_pts - n_pts, noise.shape[2]),
-                dtype=noise.dtype,
-            )
-            noise = np.concatenate([noise, pad], axis=1)
     else:
         noise = None
-
-    if with_time:
-        # Keep all 5 columns: x, y, z, e, t
-        if showers.points.shape[2] < 5:
-            raise ValueError(
-                f"with_time=True requires data with 5 columns (x, y, z, e, t), "
-                f"but file has shape {showers.points.shape}."
-            )
-        # No truncation — keep col 4 (time)
-    else:
-        # Original behaviour: drop col 4 if present
-        if showers.points.shape[2] == 5:
-            showers.points = showers.points[:, :, :4]
-
+    if showers.points.shape[2] not in (4, 5):
+        raise ValueError(
+            f"Expected 4 or 5 components (x, y, layer, energy[, time]), "
+            f"got {showers.points.shape[2]}"
+        )
     data = ShowerDict(
         shower=torch.from_numpy(showers.points),
         energy=torch.from_numpy(showers.energies),
@@ -149,7 +124,6 @@ def load_data(
         pdg=torch.from_numpy(showers.pdg),
         noise=torch.from_numpy(noise) if noise is not None else None,
     )
-
     return data
 
 
@@ -186,8 +160,8 @@ def load_and_prepare(
     *,
     samples_energy_trafo: Transformation = Identity(),
     samples_coordinate_trafo: Transformation = Identity(),
+    samples_time_trafo: Transformation | None = None,
     cond_trafo: Transformation = Identity(),
-    samples_time_trafo: Transformation | None = None,   # ADD: None = original mode
     start: int = 0,
     stop: int | None = None,
     return_noise: bool = False,
@@ -199,59 +173,79 @@ def load_and_prepare(
     rank: int = 0,
     world_size: int = 1,
     local_rank: int = 0,
+    # When provided (rank 0 only), load this index range purely for trafo
+    # fitting so the scaler sees the full training distribution instead of only
+    # rank 0's shard. This fixes non-deterministic convergence caused by the
+    # time distribution varying across the dataset ordering.
+    fit_start: int | None = None,
+    fit_stop: int | None = None,
 ) -> ModelInputDict:
-    with_time = samples_time_trafo is not None
-
     data = load_data(
         path,
         start=start,
         stop=stop,
         return_noise=return_noise,
         max_num_points=max_num_points,
-        with_time=with_time,
     )
+    has_time = data["shower"].shape[2] == 5
+    # If user supplied a time trafo but data has no time component, ignore it.
+    effective_time_trafo = samples_time_trafo if has_time else None
 
-    # Mask is always based on energy (col 3) regardless of time
     mask = data["shower"][:, :, [3]] > 0
 
     if do_initialise_trafos:
-        initialise_trafos(
-            data["energy"],
-            data["shower"],
-            mask,
-            samples_energy_trafo,
-            samples_coordinate_trafo,
-            cond_trafo,
-            samples_time_trafo,            # passed through; None in original mode
-            trafos_file=trafos_file,
-            rank=rank,
-            world_size=world_size,
-            local_rank=local_rank,
-        )
+        if fit_start is not None and fit_stop is not None and rank == 0:
+            # Load the full training split so the scaler is fit on the complete
+            # distribution rather than just rank 0's shard.
+            print(
+                f"[rank {rank}] Loading fit data [{fit_start}, {fit_stop}) "
+                f"for trafo initialisation"
+            )
+            fit_data = load_data(
+                path,
+                start=fit_start,
+                stop=fit_stop,
+                return_noise=False,
+                max_num_points=max_num_points,
+            )
+            fit_mask = fit_data["shower"][:, :, [3]] > 0
+            initialise_trafos(
+                fit_data["energy"],
+                fit_data["shower"],
+                fit_mask,
+                samples_energy_trafo,
+                samples_coordinate_trafo,
+                effective_time_trafo,
+                cond_trafo,
+                trafos_file=trafos_file,
+                rank=rank,
+                world_size=world_size,
+                local_rank=local_rank,
+            )
+        else:
+            initialise_trafos(
+                data["energy"],
+                data["shower"],
+                mask,
+                samples_energy_trafo,
+                samples_coordinate_trafo,
+                effective_time_trafo,
+                cond_trafo,
+                trafos_file=trafos_file,
+                rank=rank,
+                world_size=world_size,
+                local_rank=local_rank,
+            )
 
     energy = cond_trafo(data["energy"])
-
-    if with_time:
-        # 4 features: x, y, e, t   (z/layer stored separately)
-        x = torch.concat(
-            [
-                samples_coordinate_trafo(data["shower"][:, :, :2]),     # x, y
-                samples_energy_trafo(data["shower"][:, :, [3]]),         # e
-                samples_time_trafo(data["shower"][:, :, [4]]),           # t
-            ],
-            dim=-1,
-        )
-        x[~mask.repeat(1, 1, 4)] = 0.0
-    else:
-        # Original: 3 features: x, y, e
-        x = torch.concat(
-            [
-                samples_coordinate_trafo(data["shower"][:, :, :2]),
-                samples_energy_trafo(data["shower"][:, :, [3]]),
-            ],
-            dim=-1,
-        )
-        x[~mask.repeat(1, 1, 3)] = 0.0
+    features = [
+        samples_coordinate_trafo(data["shower"][:, :, :2]),
+        samples_energy_trafo(data["shower"][:, :, [3]]),
+    ]
+    if has_time and samples_time_trafo is not None:
+        features.append(samples_time_trafo(data["shower"][:, :, [4]]))
+    x = torch.concat(features, dim=-1)
+    x[~mask.repeat(1, 1, x.shape[-1])] = 0.0
 
     layer = (data["shower"][:, :, [2]] + 0.1).long()
     num_points = batched_histogram(
@@ -303,6 +297,11 @@ def get_data_loaders(
         val_len = data_len // 10
     split = data_len - val_len
 
+    print(
+        f"[rank {rank}] data_len={data_len}, val_len={val_len}, split={split}, "
+        f"per_rank_train={split // world_size}, world_size={world_size}"
+    )
+
     if "samples_energy_trafo" in config_dataset:
         config_dataset["samples_energy_trafo"] = compose(
             config_dataset["samples_energy_trafo"]
@@ -311,16 +310,20 @@ def get_data_loaders(
         config_dataset["samples_coordinate_trafo"] = compose(
             config_dataset["samples_coordinate_trafo"]
         )
-    if "cond_trafo" in config_dataset:
-        config_dataset["cond_trafo"] = compose(config_dataset["cond_trafo"])
-    # Wire up time trafo from config if present; otherwise stays absent (original mode)
     if "samples_time_trafo" in config_dataset:
         config_dataset["samples_time_trafo"] = compose(
             config_dataset["samples_time_trafo"]
         )
+    if "cond_trafo" in config_dataset:
+        config_dataset["cond_trafo"] = compose(config_dataset["cond_trafo"])
 
     start = rank * (split // world_size)
     stop = (rank + 1) * (split // world_size)
+
+    # Rank 0 fits trafos on the full training split (indices 0 to split) so the
+    # scaler sees the complete time distribution rather than only rank 0's shard.
+    # This is the fix for non-deterministic convergence when the time distribution
+    # varies across the dataset ordering.
     data_train = DictDataSet(
         load_and_prepare(
             **config_dataset,
@@ -330,6 +333,8 @@ def get_data_loaders(
             world_size=world_size,
             rank=rank,
             local_rank=local_rank,
+            fit_start=0 if rank == 0 else None,
+            fit_stop=split if rank == 0 else None,
         )
     )
     loader_train = DataLoader(
@@ -368,16 +373,13 @@ def get_data_loaders(
             drop_last=False,
             shuffle=False,
         )
-
     trafos = {
         "samples_energy_trafo": config_dataset.get("samples_energy_trafo", Identity()),
         "samples_coordinate_trafo": config_dataset.get(
             "samples_coordinate_trafo", Identity()
         ),
         "cond_trafo": config_dataset.get("cond_trafo", Identity()),
-        # Included only when present; generator.py can check with .get()
-        **({
-            "samples_time_trafo": config_dataset["samples_time_trafo"]
-        } if "samples_time_trafo" in config_dataset else {}),
     }
+    if "samples_time_trafo" in config_dataset:
+        trafos["samples_time_trafo"] = config_dataset["samples_time_trafo"]
     return loader_train, loader_test, trafos

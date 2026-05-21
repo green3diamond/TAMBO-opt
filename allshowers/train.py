@@ -14,52 +14,10 @@ import yaml
 from matplotlib import pyplot as plt
 from rangerlite import RangerLite
 from torch import optim
-from optimizer import Lion
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn.utils import clip_grad_norm_, get_total_norm
 
 from allshowers import data_loader, data_sets, flow_matching, transformer, util
-
-
-class CombinedOptimizer:
-    """Wraps multiple optimizers so they behave like a single one.
-
-    Used for Muon, which splits parameters into 2D (Muon) and non-2D (AdamW)
-    groups. All public methods mirror the torch.optim.Optimizer interface so
-    the rest of the Trainer code needs no special-casing.
-    """
-
-    def __init__(self, optimizers: list[torch.optim.Optimizer]) -> None:
-        self.optimizers = optimizers
-
-    @property
-    def param_groups(self) -> list:
-        """Flatten param_groups from all sub-optimizers.
-        param_groups[0] is always Muon's group — used for lr logging."""
-        groups = []
-        for opt in self.optimizers:
-            groups.extend(opt.param_groups)
-        return groups
-
-    def zero_grad(self, set_to_none: bool = True) -> None:
-        for opt in self.optimizers:
-            opt.zero_grad(set_to_none=set_to_none)
-
-    def step(self) -> None:
-        for opt in self.optimizers:
-            opt.step()
-
-    def state_dict(self) -> dict:
-        return {
-            f"optimizer_{i}": opt.state_dict()
-            for i, opt in enumerate(self.optimizers)
-        }
-
-    def load_state_dict(self, state_dict: dict) -> None:
-        for i, opt in enumerate(self.optimizers):
-            key = f"optimizer_{i}"
-            if key in state_dict:
-                opt.load_state_dict(state_dict[key])
 
 
 class Trainer:
@@ -94,8 +52,11 @@ class Trainer:
         self.result_path = conf["result_path"]
         self.batch_size = (self.batch_size + self.world_size - 1) // self.world_size
 
-        self.checkpoint_file = self.get_path("checkpoints/last.pt")
-        self.best_file = self.get_path("weights/best.pt")
+        # Checkpoint paths are computed dynamically (epoch + losses in name).
+        # These attributes always point to the *current* last/best files on disk
+        # so old ones can be removed before writing new ones.
+        self._last_checkpoint_file: str | None = None
+        self._best_checkpoint_file: str | None = None
         self.final_file = self.get_path("weights/final.pt")
         self.plot_folder = "plots/"
         trafos_file = self.get_path("preprocessing/trafos.pt")
@@ -137,11 +98,18 @@ class Trainer:
         self.epoch = 0
         self.step = 0
         self.killed = False
-        self.min_val_loss = float("inf")
+        self.min_train_loss = float("inf")
         self.min_score = float("inf")
 
-        if os.path.exists(self.checkpoint_file):
-            self.load()
+        # Resume from an explicit checkpoint if requested; otherwise auto-resume
+        # from the most recent last-checkpoint in the checkpoints/ folder.
+        resume_ckpt = conf.get("resume_ckpt_file", None)
+        if resume_ckpt:
+            self.load(resume_ckpt)
+        else:
+            last_ckpt = self._find_last_checkpoint()
+            if last_ckpt:
+                self.load(last_ckpt)
 
     def init_model(self, model_config: dict[str, Any]) -> None:
         if "flow_config" in model_config:
@@ -157,19 +125,8 @@ class Trainer:
             flow.network = DDP(flow.network, device_ids=[self.device.index])  # type: ignore
         self.flow = flow
 
-    def _scheduler_step(self, interval: str) -> None:
-        """Step scheduler(s) — handles both single and list (Muon) schedulers."""
-        if self.scheduler is None or self.scheduler_interval != interval:
-            return
-        if isinstance(self.scheduler, list):
-            for s in self.scheduler:
-                s.step()
-        else:
-            self.scheduler.step()
-
     def configure_optimizer(self) -> None:
         optimizer_name = self.optimizer_name.lower().strip()
-
         if optimizer_name == "adamw":
             self.optimizer = optim.AdamW(
                 params=self.flow.network.parameters(),
@@ -201,107 +158,25 @@ class Trainer:
                 lookahead_steps=6,
                 lookahead_alpha=0.5,
             )
-        elif optimizer_name == "lion":
-            self.optimizer = Lion(
-                params=self.flow.network.parameters(),
-                lr=self.learning_rate,
-                betas=(0.9, 0.99),
-                weight_decay=self.weight_decay,
-            )
-        elif optimizer_name == "muon":
-            if not hasattr(optim, "Muon"):
-                raise ImportError(
-                    "Muon optimizer requires PyTorch >= 2.9. "
-                    "Use optimizer: Ranger or optimizer: AdamW instead."
-                )
-            # Unwrap DDP to access bare parameters
-            base_network = (
-                self.flow.network.module
-                if hasattr(self.flow.network, "module")
-                else self.flow.network
-            )
-            muon_params = [p for p in base_network.parameters() if p.ndim == 2]
-            other_params = [p for p in base_network.parameters() if p.ndim != 2]
-            if muon_params and other_params:
-                self.optimizer = CombinedOptimizer([
-                    optim.Muon(
-                        muon_params,
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                        adjust_lr_fn="match_rms_adamw",
-                    ),
-                    optim.AdamW(
-                        other_params,
-                        lr=self.learning_rate,
-                        weight_decay=self.weight_decay,
-                        betas=(0.9, 0.999),
-                        eps=1e-8,
-                    ),
-                ])
-            elif muon_params:
-                self.optimizer = optim.Muon(
-                    muon_params,
-                    lr=self.learning_rate,
-                    weight_decay=self.weight_decay,
-                    adjust_lr_fn="match_rms_adamw",
-                )
-            else:
-                self.optimizer = optim.AdamW(
-                    other_params,
-                    lr=self.learning_rate,
-                    weight_decay=self.weight_decay,
-                )
         else:
             raise NotImplementedError(
                 f"Optimizer {self.optimizer_name} not implemented."
             )
 
-        # ---- scheduler setup ----
-        # For Muon (CombinedOptimizer) only Cosine is supported.
-        # Each sub-optimizer gets its own scheduler instance.
-        if optimizer_name == "muon":
-            if self.scheduler_name is None:
-                self.scheduler = None
-                self.scheduler_interval = "never"
-            elif self.scheduler_name.lower() == "cosine":
-                if isinstance(self.optimizer, CombinedOptimizer):
-                    self.scheduler = [
-                        optim.lr_scheduler.CosineAnnealingLR(
-                            opt, T_max=self.num_epochs
-                        )
-                        for opt in self.optimizer.optimizers
-                    ]
-                else:
-                    # Muon-only path (no AdamW fallback needed)
-                    self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                        self.optimizer, T_max=self.num_epochs
-                    )
-                self.scheduler_interval = "epoch"
-            else:
-                warnings.warn(
-                    f"Scheduler '{self.scheduler_name}' is not supported with Muon. "
-                    "Only Cosine is supported. Disabling scheduler.",
-                    UserWarning,
-                )
-                self.scheduler = None
-                self.scheduler_interval = "never"
-            return  # skip the standard scheduler block below
-
-        # Standard scheduler block for all other optimizers
         if self.scheduler_name is None:
             self.scheduler = None
             self.scheduler_interval = "never"
-        elif self.scheduler_name.lower() == "step":
+        elif self.scheduler_name.lower() == "Step".lower():
             self.scheduler = optim.lr_scheduler.StepLR(
                 optimizer=self.optimizer, step_size=self.num_epochs // 3, gamma=0.1
             )
             self.scheduler_interval = "epoch"
-        elif self.scheduler_name.lower() == "exponential":
+        elif self.scheduler_name.lower() == "Exponential".lower():
             self.scheduler = optim.lr_scheduler.ExponentialLR(
                 optimizer=self.optimizer, gamma=3e-3 ** (1.0 / self.num_epochs)
             )
             self.scheduler_interval = "epoch"
-        elif self.scheduler_name.lower() == "onecycle":
+        elif self.scheduler_name.lower() == "OneCycle".lower():
             self.scheduler = optim.lr_scheduler.OneCycleLR(
                 optimizer=self.optimizer,
                 max_lr=self.learning_rate,
@@ -309,12 +184,12 @@ class Trainer:
                 * (len(self.train_loader) // self.grad_accum),
             )
             self.scheduler_interval = "step"
-        elif self.scheduler_name.lower() == "cosine":
+        elif self.scheduler_name.lower() == "Cosine".lower():
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=self.optimizer, T_max=self.num_epochs
             )
             self.scheduler_interval = "epoch"
-        elif self.scheduler_name.lower() == "cosinewarmup":
+        elif self.scheduler_name.lower() == "CosineWarmup".lower():
             warmup_epochs = 1
             self.scheduler = optim.lr_scheduler.SequentialLR(
                 optimizer=self.optimizer,
@@ -341,7 +216,42 @@ class Trainer:
                 f"Scheduler {self.scheduler_name} not implemented."
             )
 
-    def init_path(self) -> None:
+    def _checkpoint_name(self, kind: str, epoch: int, train_loss: float, val_loss: float) -> str:
+        """Return a checkpoint filename encoding kind, epoch, and losses."""
+        return f"{kind}_epoch_{epoch:04d}_train_loss_{train_loss:.4f}_val_loss_{val_loss:.4f}.pt"
+
+    def _find_last_checkpoint(self) -> str | None:
+        """Return the path of the most recent last-checkpoint, or None."""
+        ckpt_dir = self.get_path("checkpoints/")
+        try:
+            files = [
+                f for f in os.listdir(ckpt_dir)
+                if f.startswith("last_epoch_") and f.endswith(".pt")
+            ]
+        except FileNotFoundError:
+            return None
+        if not files:
+            return None
+        # Pick the one with the highest epoch number (encoded in filename).
+        files.sort()
+        return os.path.join(ckpt_dir, files[-1])
+
+    def _find_best_checkpoint(self) -> str | None:
+        """Return the path of the current best-checkpoint, or None."""
+        ckpt_dir = self.get_path("checkpoints/")
+        try:
+            files = [
+                f for f in os.listdir(ckpt_dir)
+                if f.startswith("best_epoch_") and f.endswith(".pt")
+            ]
+        except FileNotFoundError:
+            return None
+        if not files:
+            return None
+        files.sort()
+        return os.path.join(ckpt_dir, files[-1])
+
+
         if "result_path" not in self.conf or not os.path.isdir(
             self.conf["result_path"]
         ):
@@ -386,13 +296,15 @@ class Trainer:
                     if self.grad_clip:
                         clip_grad_norm_(self.flow.parameters(), self.grad_clip)
                     self.optimizer.step()
-                    self._scheduler_step("step")
+                    if self.scheduler_interval == "step" and self.scheduler is not None:
+                        self.scheduler.step()
                     self.optimizer.zero_grad()
                 train_loss_sum += loss.item() * len(losses)
                 train_loss_count += len(losses)
                 self.train_losses_batch.append(loss.item())
                 self.learning_rates.append(self.optimizer.param_groups[0]["lr"])
-            self._scheduler_step("epoch")
+            if self.scheduler_interval == "epoch" and self.scheduler is not None:
+                self.scheduler.step()
             if self.rank == 0:
                 self.train_losses.append(train_loss_sum / train_loss_count)
                 self.evaluate_and_save()
@@ -450,29 +362,6 @@ class Trainer:
     def __signal_handler(self, sig, frame):
         self.killed = True
 
-    def _get_scheduler_state_dict(self) -> dict:
-        """Serialize scheduler state — handles single scheduler and list (Muon)."""
-        if self.scheduler is None:
-            return {}
-        if isinstance(self.scheduler, list):
-            return {
-                f"scheduler_{i}": s.state_dict()
-                for i, s in enumerate(self.scheduler)
-            }
-        return self.scheduler.state_dict()
-
-    def _load_scheduler_state_dict(self, state_dict: dict) -> None:
-        """Restore scheduler state — handles single scheduler and list (Muon)."""
-        if self.scheduler is None or not state_dict:
-            return
-        if isinstance(self.scheduler, list):
-            for i, s in enumerate(self.scheduler):
-                key = f"scheduler_{i}"
-                if key in state_dict:
-                    s.load_state_dict(state_dict[key])
-        else:
-            self.scheduler.load_state_dict(state_dict)
-
     def save(self) -> None:
         # ignore interruptions while writing checkpoints
         original_sigint_handler = signal.getsignal(signal.SIGINT)
@@ -499,10 +388,18 @@ class Trainer:
                 f.write(f"{loss} {grad_norm} {lr}\n")
 
         # save checkpoint
+        if self.scheduler is None:
+            scheduler_state_dict = {}
+        else:
+            scheduler_state_dict = self.scheduler.state_dict()
         flow_state_dict = self.flow.state_dict()
         for key in list(flow_state_dict.keys()):
             if "module." in key:
                 flow_state_dict[key.replace("module.", "")] = flow_state_dict.pop(key)
+
+        train_loss = self.train_losses[-1]
+        val_loss = self.val_losses[-1]
+
         checkpoint = {
             "flow": flow_state_dict,
             "epoch": self.epoch,
@@ -512,20 +409,30 @@ class Trainer:
             "scores": self.scores,
             "learning_rates": self.learning_rates,
             "grad_norms": self.grad_norms,
-            "min_val_loss": self.min_val_loss,
+            "min_train_loss": self.min_train_loss,
             "min_score": self.min_score,
             "optimizer": self.optimizer.state_dict(),
-            "scheduler": self._get_scheduler_state_dict(),
+            "scheduler": scheduler_state_dict,
         }
-        if os.path.exists(self.checkpoint_file):
-            os.remove(self.checkpoint_file)
-        torch.save(checkpoint, self.checkpoint_file)
 
-        if self.val_losses[-1] < self.min_val_loss:
-            self.min_val_loss = self.val_losses[-1]
-            if os.path.exists(self.best_file):
-                os.remove(self.best_file)
-            torch.save(flow_state_dict, self.best_file)
+        # --- last checkpoint: remove previous, write new with losses in name ---
+        new_last_name = self._checkpoint_name("last", self.epoch, train_loss, val_loss)
+        new_last_path = self.get_path(f"checkpoints/{new_last_name}")
+        if self._last_checkpoint_file and os.path.exists(self._last_checkpoint_file):
+            os.remove(self._last_checkpoint_file)
+        torch.save(checkpoint, new_last_path)
+        self._last_checkpoint_file = new_last_path
+
+        # --- best checkpoint: remove previous, write new if train loss improved ---
+        if train_loss < self.min_train_loss:
+            self.min_train_loss = train_loss
+            new_best_name = self._checkpoint_name("best", self.epoch, train_loss, val_loss)
+            new_best_path = self.get_path(f"checkpoints/{new_best_name}")
+            if self._best_checkpoint_file and os.path.exists(self._best_checkpoint_file):
+                os.remove(self._best_checkpoint_file)
+            torch.save(flow_state_dict, new_best_path)
+            self._best_checkpoint_file = new_best_path
+            print(f"  -> new best checkpoint: {new_best_name}")
 
         if bool(self.scores) and (self.scores[-1] < self.min_score):
             self.min_score = self.scores[-1]
@@ -540,11 +447,11 @@ class Trainer:
             print("exit")
             sys.exit(0)
 
-    def load(self) -> None:
+    def load(self, checkpoint_path: str) -> None:
         old_weights = self.flow.state_dict()
         try:
             checkpoint = torch.load(
-                self.checkpoint_file, map_location=self.device, weights_only=True
+                checkpoint_path, map_location=self.device, weights_only=True
             )
             if isinstance(self.flow.network, DDP):
                 for key in list(checkpoint["flow"].keys()):
@@ -555,11 +462,9 @@ class Trainer:
             self.flow.load_state_dict(checkpoint["flow"], strict=True)
         except Exception:
             warnings.warn(
-                f"Loading {os.path.basename(self.checkpoint_file)} failed. Deleting it."
+                f"Loading {os.path.basename(checkpoint_path)} failed. Skipping resume."
             )
             sys.stdout.flush()
-            if os.path.exists(self.checkpoint_file):
-                os.remove(self.checkpoint_file)
             self.flow.load_state_dict(old_weights)
             return
 
@@ -570,13 +475,23 @@ class Trainer:
         self.scores = checkpoint["scores"]
         self.learning_rates = checkpoint["learning_rates"]
         self.grad_norms = checkpoint["grad_norms"]
-        self.min_val_loss = checkpoint["min_val_loss"]
+        self.min_train_loss = checkpoint["min_train_loss"]
         self.min_score = checkpoint["min_score"]
         self.optimizer.load_state_dict(checkpoint["optimizer"])
-        self._load_scheduler_state_dict(checkpoint["scheduler"])
+        if self.scheduler is not None:
+            self.scheduler.load_state_dict(checkpoint["scheduler"])
+
+        # Track which files are on disk so save() can clean them up.
+        basename = os.path.basename(checkpoint_path)
+        if basename.startswith("last_epoch_"):
+            self._last_checkpoint_file = checkpoint_path
+            # Also discover existing best checkpoint to avoid orphaning it.
+            self._best_checkpoint_file = self._find_best_checkpoint()
+        # If loaded from an explicit (non-last) checkpoint, leave pointers as
+        # None so the next save() simply writes fresh files.
 
         print(
-            f"[rank={self.rank}]: Loaded {self.checkpoint_file} at epoch {self.epoch}."
+            f"[rank={self.rank}]: Loaded {checkpoint_path} at epoch {self.epoch}."
         )
         sys.stdout.flush()
 

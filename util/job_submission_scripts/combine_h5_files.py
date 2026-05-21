@@ -35,6 +35,8 @@ Usage:
 
   python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/combine_h5_files.py --particle photons  --train-limit 130000 --save-test-also --slurm
 
+  python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/combine_h5_files.py --particle muons  --train-limit 130000 --save-test-also --slurm
+
 """
 
 import os
@@ -50,7 +52,7 @@ import h5py
 from tqdm.auto import tqdm
 import random
 
-BASE_DIR  = Path("/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files")
+BASE_DIR  = Path("/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3")
 PARTICLES = ["electrons", "muons", "photons"]
 
 # PDG groups for balanced train/test splitting
@@ -62,10 +64,10 @@ DEFAULT_TRAIN_LIMIT = 130_000         # 65k per group
 THIS_SCRIPT = Path(__file__).resolve()
 
 # Slurm / environment settings
-SLURM_PARTITION   = "arguelles_delgado,shared,sapphire"
+SLURM_PARTITION   = "serial_requeue"
 SLURM_MEM         = "64G"
-SLURM_TIME        = "0-24:00"
-SLURM_CPUS        = 48
+SLURM_TIME        = "0-1:00"
+SLURM_CPUS        = 24
 CONDA_ENV         = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tamboOpt_env/"
 LOG_DIR           = BASE_DIR / "slurm_logs"
 

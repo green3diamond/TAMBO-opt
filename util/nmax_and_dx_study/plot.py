@@ -30,12 +30,13 @@ Usage
         --nmax-sweep 2000 4000 6000 10000 14000 18000 20000
 
     # Different Nmax per secondary
-    python plot_energy_ignored.py \\
-        --csv-root /path/to/output --plot-dir /path/to/plots \\
-        --dx-sweep 5 8 10 \\
-        --electrons-nmax 2000 4000 10000 20000 \\
-        --muons-nmax     500 1000 2000 \\
-        --photons-nmax   2000 4000 6000 10000 14000 18000 20000
+    python /n/home04/hhanif/TAMBO-opt/nmax_and_dx_study/plot.py \
+        --csv-root /n/home04/hhanif/TAMBO-opt/results/nmax_study \
+        --plot-dir /n/home04/hhanif/TAMBO-opt/results/nmax_study/plots \
+        --dx-sweep 5 8 10 \
+        --electrons-nmax 4000 6000 \
+        --muons-nmax     14000 18000 20000 \
+        --photons-nmax   10000 14000 18000 20000
 
     # If --<secondary>-nmax is omitted, that figure falls back to --nmax-sweep
     # (or the built-in default of 2000 4000 6000 10000 14000 18000 20000).

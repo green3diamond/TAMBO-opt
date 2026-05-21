@@ -2,51 +2,53 @@
 """
 Submit per-chunk SLURM jobs for postprocess_showers.py.
 
-Reads each registry_pdg_<N>.txt (listing combined hit-parquet paths), splits
-it into chunks of N parquets each (default 200), and sbatchs a NON-array
-SLURM job per chunk. Each job produces 3 HDF5 files:
-
-    <output>/pdg_<N>/chunk_<XXXX>_electrons.h5
-    <output>/pdg_<N>/chunk_<XXXX>_muons.h5
-    <output>/pdg_<N>/chunk_<XXXX>_photons.h5
+Two-zone centroid approach: hits within --zone-boundary use --*-dx-near,
+hits beyond use --*-dx-far. Both centroid pools are combined before Nmax cut.
 
 Example:
+    python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py \
+        --registry-dir /n/netscratch/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_samples_for_training/   \
+        --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3 \
+        --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py \
+        --chunk-size   200 \
+        --partition    serial_requeue --time 6:00:00 --mem 32G --cpus 1 \
+        --particles electrons \
+        --electrons-dx-near 10 --electrons-dx-far 20 --electrons-nmax 4096 \
+        --zone-boundary 10000
 
-#electron
-python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py     --registry-dir /n/netscratch/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_samples_for_training/     --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files     --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py     --chunk-size   500     --partition    serial_requeue --time 4:00:00 --mem 16G --cpus 1 --particles electrons --electrons-nmax 4096 --electrons-dx 10
-
-#photon
-python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py     --registry-dir /n/netscratch/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_samples_for_training/     --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files     --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py     --chunk-size   25     --partition    serial_requeue --time 4:00:00 --mem 16G --cpus 1 --particles photons --photons-nmax 4096 --photons-dx 8
-
-
-python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py \
-    --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files \
-    --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py \
-    --partition    serial_requeue \
-    --time 4:00:00 \
-    --mem 16G \
-    --cpus 1 \
-    --particles photons \
-    --photons-nmax 4096 \
-    --photons-dx 8 \
-    --resubmit /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files/_submit/run_20260426_183055/
+    python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py \
+        --registry-dir /n/netscratch/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_samples_for_training/   \
+        --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3 \
+        --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py \
+        --chunk-size   200 \
+        --partition    serial_requeue --time 6:00:00 --mem 32G --cpus 1 \
+        --particles photons \
+        --photons-dx-near 10 --photons-dx-far 20 --photons-nmax 8064 \
+        --zone-boundary 10000
 
 
-    python submit_postprocess.py \\
-        --registry-dir /path/to/registries \\
-        --output-dir   /path/to/h5_out \\
-        --script       /abs/path/to/postprocess_showers.py \\
-        --chunk-size   200 \\
-        --partition    shared --time 02:00:00 --mem 16G --cpus 4
+    python /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers_submission.py \
+        --registry-dir /n/netscratch/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_samples_for_training/   \
+        --output-dir   /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3 \
+        --script       /n/home04/hhanif/TAMBO-opt/job_submission_scripts/postprocess_showers.py \
+        --chunk-size   100 \
+        --partition    serial_requeue --time 6:00:00 --mem 32G --cpus 1 \
+        --particles muons \
+        --muons-dx-near 10 --muons-dx-far 20 --muons-nmax 25088 \
+        --zone-boundary 10000
 
-    # limit to specific PDGs
-    python submit_postprocess.py ... --pdgs 11 -11 111
+    # dry-run
+    python postprocess_showers_submission.py ... --dry-run
 
-    # dry-run (write sbatch scripts + chunk lists, don't submit)
-    python submit_postprocess.py ... --dry-run
+    # smoke test: one job per PDG
+    python postprocess_showers_submission.py ... --test-run
 
-    # smoke test: submit exactly ONE job per PDG (5 jobs total)
-    python submit_postprocess.py ... --test-run
+    # resubmit OOM failures from a previous run
+    python postprocess_showers_submission.py \
+        --output-dir /path/to/h5_out \
+        --script     /abs/path/to/postprocess_showers.py \
+        --mem 64G \
+        --resubmit   /path/to/h5_out/_submit/run_20260426_183055/
 """
 
 from __future__ import annotations
@@ -61,9 +63,6 @@ from datetime import datetime
 
 DEFAULT_PDGS = [11, -11, 111, 211, -211]
 
-# Default cluster env setup — overridable via --env-setup / --env-setup-file /
-# --no-env-setup. Change these defaults if your lab uses a different module +
-# environment combination.
 DEFAULT_ENV_SETUP = [
     "module load python/3.12.11-fasrc01",
     'eval "$(mamba shell hook --shell bash)"',
@@ -104,7 +103,6 @@ def _write_sbatch_script(
     account: str | None,
     extra_sbatch: list[str],
     env_setup: list[str],
-    # command
     python_exec: str,
     script_path: str,
     chunk_list_path: str,
@@ -127,14 +125,11 @@ def _write_sbatch_script(
         lines.append(f"#SBATCH {line}")
 
     lines.append("")
-    lines.append("echo \"Host: $(hostname)\"")
-    lines.append("echo \"Date: $(date)\"")
-    lines.append(f"echo \"Job : {job_name}\"")
+    lines.append('echo "Host: $(hostname)"')
+    lines.append('echo "Date: $(date)"')
+    lines.append(f'echo "Job : {job_name}"')
     lines.append("")
 
-    # Environment setup (module load, mamba/conda activate, etc.)
-    # These run BEFORE `set -e` because `mamba shell hook` and similar can
-    # legitimately touch unset variables.
     if env_setup:
         lines.append("# ── Environment setup ──")
         for cmd_line in env_setup:
@@ -153,7 +148,6 @@ def _write_sbatch_script(
         "--output-dir",   output_dir,
         *post_args,
     ]
-    # single-line command for clarity in the sbatch script
     lines.append("srun " + " ".join(_shell_quote(c) for c in cmd))
     lines.append("")
 
@@ -163,24 +157,17 @@ def _write_sbatch_script(
 
 
 def _shell_quote(s: str) -> str:
-    # lightweight quoter — wraps in single quotes if needed
     import shlex
     return shlex.quote(str(s))
 
 
 OOM_PATTERNS = [
-    "out of memory",
-    "oom-kill",
-    "killed process",
-    "memoryerror",
-    "cannot allocate memory",
-    "bus error",
-    "slurmstepd: error.*memory",
+    "out of memory", "oom-kill", "killed process", "memoryerror",
+    "cannot allocate memory", "bus error", "slurmstepd: error.*memory",
 ]
 
 
 def _is_oom_log(log_path: str) -> bool:
-    """Return True if the log file contains OOM-related patterns."""
     try:
         with open(log_path, errors="replace") as f:
             text = f.read().lower()
@@ -191,10 +178,6 @@ def _is_oom_log(log_path: str) -> bool:
 
 
 def _find_oom_jobs(run_dir: str) -> list[dict]:
-    """
-    Scan <run_dir>/logs/*.err for OOM failures.
-    Returns list of dicts with: job_name, sbatch_path, chunk_list_path, pdg, chunk_id.
-    """
     import re
     log_dir    = os.path.join(run_dir, "logs")
     sbatch_dir = os.path.join(run_dir, "sbatch")
@@ -212,7 +195,6 @@ def _find_oom_jobs(run_dir: str) -> list[dict]:
         if not _is_oom_log(log_path):
             continue
 
-        # fname pattern: pp_pdg<PDG>_c<CHUNK>_<JOBID>.err
         m = re.match(r"(pp_pdg(-?\d+)_c(\d{4}))_\d+\.err$", fname)
         if not m:
             print(f"  WARNING: cannot parse job name from {fname}, skipping.")
@@ -232,19 +214,14 @@ def _find_oom_jobs(run_dir: str) -> list[dict]:
             chunk_list_path = None
 
         failed.append({
-            "job_name":        job_name,
-            "pdg":             pdg,
-            "chunk_id":        chunk_id,
-            "sbatch_path":     sbatch_path,
-            "chunk_list_path": chunk_list_path,
-            "log_path":        log_path,
+            "job_name": job_name, "pdg": pdg, "chunk_id": chunk_id,
+            "sbatch_path": sbatch_path, "chunk_list_path": chunk_list_path,
+            "log_path": log_path,
         })
-
     return failed
 
 
 def _bump_mem(mem_str: str, factor: float = 2.0) -> str:
-    """Double (or scale by factor) a SLURM memory string like 8G or 16384M."""
     import re
     m = re.match(r"^(\d+(?:\.\d+)?)([MmGgTt]?)$", mem_str.strip())
     if not m:
@@ -257,14 +234,23 @@ def _bump_mem(mem_str: str, factor: float = 2.0) -> str:
 def _build_post_args(args) -> list[str]:
     """Build passthrough args list for postprocess_showers.py."""
     post_args: list[str] = []
-    if args.electrons_dx   is not None: post_args += ["--electrons-dx",   str(args.electrons_dx)]
-    if args.muons_dx       is not None: post_args += ["--muons-dx",       str(args.muons_dx)]
-    if args.photons_dx     is not None: post_args += ["--photons-dx",     str(args.photons_dx)]
+    # Per-particle dx-near and dx-far
+    if args.electrons_dx_near is not None: post_args += ["--electrons-dx-near", str(args.electrons_dx_near)]
+    if args.electrons_dx_far  is not None: post_args += ["--electrons-dx-far",  str(args.electrons_dx_far)]
+    if args.muons_dx_near     is not None: post_args += ["--muons-dx-near",     str(args.muons_dx_near)]
+    if args.muons_dx_far      is not None: post_args += ["--muons-dx-far",      str(args.muons_dx_far)]
+    if args.photons_dx_near   is not None: post_args += ["--photons-dx-near",   str(args.photons_dx_near)]
+    if args.photons_dx_far    is not None: post_args += ["--photons-dx-far",    str(args.photons_dx_far)]
+    # Per-particle nmax
     if args.electrons_nmax is not None: post_args += ["--electrons-nmax", str(args.electrons_nmax)]
     if args.muons_nmax     is not None: post_args += ["--muons-nmax",     str(args.muons_nmax)]
     if args.photons_nmax   is not None: post_args += ["--photons-nmax",   str(args.photons_nmax)]
+    # Zone boundary (always passed)
+    post_args += ["--zone-boundary", str(args.zone_boundary)]
+    # Other flags
     if args.no_time:  post_args.append("--no-time")
     if args.no_dedup: post_args.append("--no-dedup")
+    if args.guarantee_all_planes: post_args.append("--guarantee-all-planes")
     if args.dedup_time_tol       is not None:
         post_args += ["--dedup-time-tol",       str(args.dedup_time_tol)]
     if args.dedup_energy_rel_tol is not None:
@@ -277,7 +263,6 @@ def _build_post_args(args) -> list[str]:
 
 
 def _resolve_env_setup(args) -> list[str]:
-    """Resolve env setup lines from args (same precedence as main submission)."""
     if args.no_env_setup:
         return []
     if args.env_setup_file:
@@ -290,7 +275,6 @@ def _resolve_env_setup(args) -> list[str]:
 
 
 def _resubmit_oom(run_dir: str, args) -> None:
-    """Find OOM-failed jobs in run_dir and resubmit them with bumped memory."""
     print(f"\nScanning run dir for OOM failures: {run_dir}")
     failed = _find_oom_jobs(run_dir)
 
@@ -304,7 +288,6 @@ def _resubmit_oom(run_dir: str, args) -> None:
 
     print(f"Found {len(failed)} OOM job(s).  Original mem: {args.mem}  ->  New mem: {new_mem}\n")
 
-    # create a resubmit sub-dir inside the original run_dir
     stamp        = datetime.now().strftime("%Y%m%d_%H%M%S")
     resub_dir    = os.path.join(run_dir, f"resubmit_oom_{stamp}")
     resub_sbatch = os.path.join(resub_dir, "sbatch")
@@ -326,7 +309,6 @@ def _resubmit_oom(run_dir: str, args) -> None:
         pdg         = job["pdg"]
         chunk_id    = job["chunk_id"]
 
-        # remove broken/partial h5 outputs before resubmitting
         for particle in (args.particles or ["electrons", "muons", "photons"]):
             broken = os.path.join(output_dir, f"pdg_{pdg}",
                                   f"chunk_{chunk_id:04d}_{particle}.h5")
@@ -335,23 +317,14 @@ def _resubmit_oom(run_dir: str, args) -> None:
                 print(f"  Removed broken h5: {broken}")
 
         _write_sbatch_script(
-            sbatch_path     = sbatch_path,
-            job_name        = job_name,
-            log_dir         = resub_logs,
-            partition       = args.partition,
-            time_limit      = args.time,
-            mem             = new_mem,
-            cpus            = args.cpus,
-            account         = args.account,
-            extra_sbatch    = args.extra_sbatch,
-            env_setup       = env_setup_lines,
-            python_exec     = args.python,
-            script_path     = os.path.abspath(args.script),
-            chunk_list_path = job["chunk_list_path"],
-            incident_pdg    = pdg,
-            chunk_id        = chunk_id,
-            output_dir      = output_dir,
-            post_args       = post_args,
+            sbatch_path=sbatch_path, job_name=job_name, log_dir=resub_logs,
+            partition=args.partition, time_limit=args.time, mem=new_mem,
+            cpus=args.cpus, account=args.account, extra_sbatch=args.extra_sbatch,
+            env_setup=env_setup_lines, python_exec=args.python,
+            script_path=os.path.abspath(args.script),
+            chunk_list_path=job["chunk_list_path"],
+            incident_pdg=pdg, chunk_id=chunk_id,
+            output_dir=output_dir, post_args=post_args,
         )
 
         if args.dry_run:
@@ -388,91 +361,66 @@ def main():
         description="Submit non-array SLURM jobs for postprocess_showers.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--registry-dir", required=False, default=None,
-                   help="Directory containing registry_pdg_<N>.txt files. "
-                        "Required for normal submission; not needed with --resubmit.")
-    p.add_argument("--output-dir", required=True,
-                   help="Root dir for H5 output (per-PDG subdirs created here).")
-    p.add_argument("--script", required=True,
-                   help="Absolute path to postprocess_showers.py.")
-    p.add_argument("--python", default="python",
-                   help="Python executable name/path used inside the sbatch job. "
-                        "Defaults to bare 'python' so it picks up whatever env the "
-                        "--env-setup lines activate.")
-    p.add_argument("--pdgs", nargs="+", type=int, default=DEFAULT_PDGS,
-                   help="Incident PDG values to process (looks for registry_pdg_<N>.txt each).")
-    p.add_argument("--chunk-size", type=int, default=200,
-                   help="Number of parquet files per SLURM job.")
+    p.add_argument("--registry-dir", required=False, default=None)
+    p.add_argument("--output-dir",   required=True)
+    p.add_argument("--script",       required=True)
+    p.add_argument("--python",       default="python")
+    p.add_argument("--pdgs",         nargs="+", type=int, default=DEFAULT_PDGS)
+    p.add_argument("--chunk-size",   type=int, default=200)
 
     # SLURM resources
     p.add_argument("--partition", default="shared")
-    p.add_argument("--time", default="02:00:00")
-    p.add_argument("--mem", default="16G")
-    p.add_argument("--cpus", type=int, default=4)
-    p.add_argument("--account", default=None)
-    p.add_argument("--extra-sbatch", nargs="*", default=[],
-                   help="Extra raw #SBATCH directives, e.g. --extra-sbatch '--qos=normal'")
+    p.add_argument("--time",      default="02:00:00")
+    p.add_argument("--mem",       default="16G")
+    p.add_argument("--cpus",      type=int, default=4)
+    p.add_argument("--account",   default=None)
+    p.add_argument("--extra-sbatch", nargs="*", default=[])
 
-    # environment setup inside each sbatch script
-    p.add_argument("--env-setup", nargs="*", default=None,
-                   help="One or more shell commands to run BEFORE srun "
-                        "(e.g. module load …, mamba activate …). "
-                        "If omitted, a sensible cluster default is used.")
-    p.add_argument("--env-setup-file", default=None,
-                   help="Path to a file containing one shell command per line to "
-                        "paste verbatim into each sbatch script before srun. "
-                        "Overrides --env-setup and the built-in default.")
-    p.add_argument("--no-env-setup", action="store_true",
-                   help="Skip all environment setup lines in the sbatch script.")
+    # Environment setup
+    p.add_argument("--env-setup",      nargs="*", default=None)
+    p.add_argument("--env-setup-file", default=None)
+    p.add_argument("--no-env-setup",   action="store_true")
+    p.add_argument("--work-dir",       default=None)
 
-    # work-dir for logs + generated sbatch/chunk-list files
-    p.add_argument("--work-dir", default=None,
-                   help="Dir to write chunk lists + sbatch scripts + logs. "
-                        "Default: <output-dir>/_submit")
+    # Per-particle dx-near, dx-far, nmax (passthrough to postprocess_showers.py)
+    p.add_argument("--electrons-dx-near", type=float, default=None,
+                   help="Near-zone cell size for electrons (cheb < zone-boundary).")
+    p.add_argument("--electrons-dx-far",  type=float, default=None,
+                   help="Far-zone cell size for electrons (cheb >= zone-boundary).")
+    p.add_argument("--muons-dx-near",     type=float, default=None)
+    p.add_argument("--muons-dx-far",      type=float, default=None)
+    p.add_argument("--photons-dx-near",   type=float, default=None)
+    p.add_argument("--photons-dx-far",    type=float, default=None)
+    p.add_argument("--electrons-nmax",    type=int,   default=None)
+    p.add_argument("--muons-nmax",        type=int,   default=None)
+    p.add_argument("--photons-nmax",      type=int,   default=None)
+    p.add_argument("--zone-boundary",     type=float, default=10_000.0,
+                   help="Chebyshev distance threshold in metres (default 10000 m = 10 km).")
 
-    # passthrough flags for postprocess_showers.py
-    p.add_argument("--electrons-dx",   type=float)
-    p.add_argument("--muons-dx",       type=float)
-    p.add_argument("--photons-dx",     type=float)
-    p.add_argument("--electrons-nmax", type=int)
-    p.add_argument("--muons-nmax",     type=int)
-    p.add_argument("--photons-nmax",   type=int)
+    # Other passthrough flags
     p.add_argument("--no-time",  action="store_true")
     p.add_argument("--no-dedup", action="store_true")
-    p.add_argument("--dedup-time-tol",       type=float)
-    p.add_argument("--dedup-energy-rel-tol", type=float)
-    p.add_argument("--dedup-xy-tol",         type=float)
+    p.add_argument("--guarantee-all-planes", action="store_true",
+                   help="Pass --guarantee-all-planes to the worker: every plane gets "
+                        "at least one centroid before the global top-Nmax fill.")
+    p.add_argument("--dedup-time-tol",       type=float, default=None)
+    p.add_argument("--dedup-energy-rel-tol", type=float, default=None)
+    p.add_argument("--dedup-xy-tol",         type=float, default=None)
     p.add_argument("--particles", nargs="+", default=None,
-                   choices=["electrons", "muons", "photons"],
-                   help="Only produce H5 files for these secondary types. "
-                        "Pass any subset of electrons/muons/photons. "
-                        "Omit to produce all three per job.")
+                   choices=["electrons", "muons", "photons"])
 
-    # control
-    p.add_argument("--dry-run", action="store_true",
-                   help="Create chunk lists and sbatch scripts but DO NOT submit.")
-    p.add_argument("--max-jobs", type=int, default=None,
-                   help="Global cap on total sbatch submissions.")
-    p.add_argument("--test-run", action="store_true",
-                   help="Submit exactly ONE job per PDG (5 jobs total when all 5 "
-                        "PDGs are selected). Uses only the first --chunk-size "
-                        "parquets from each registry. Useful for end-to-end smoke "
-                        "tests before launching the full campaign.")
+    # Control
+    p.add_argument("--dry-run",   action="store_true")
+    p.add_argument("--max-jobs",  type=int, default=None)
+    p.add_argument("--test-run",  action="store_true")
 
     # OOM resubmission
-    p.add_argument("--resubmit", metavar="RUN_DIR", default=None,
-                   help="Path to a previous run_<timestamp> directory. Scans its "
-                        "logs/*.err files for OOM failures and resubmits those "
-                        "chunks with bumped memory (see --oom-mem-factor). "
-                        "All other flags (--partition, --time, --mem, passthrough "
-                        "args, etc.) are reused unless overridden on the command line.")
-    p.add_argument("--oom-mem-factor", type=float, default=2.0,
-                   help="Multiply --mem by this factor when resubmitting OOM jobs. "
-                        "Default: 2.0 (doubles the memory).")
+    p.add_argument("--resubmit", metavar="RUN_DIR", default=None)
+    p.add_argument("--oom-mem-factor", type=float, default=2.0)
 
     args = p.parse_args()
 
-    # ── OOM resubmit mode ────────────────────────────────────────────────────
+    # OOM resubmit mode
     if args.resubmit is not None:
         run_dir = os.path.abspath(args.resubmit)
         if not os.path.isdir(run_dir):
@@ -480,10 +428,9 @@ def main():
             sys.exit(1)
         _resubmit_oom(run_dir, args)
         sys.exit(0)
-    # ─────────────────────────────────────────────────────────────────────────
 
     if not args.registry_dir:
-        p.error("--registry-dir is required for normal submission (omit only when using --resubmit)")
+        p.error("--registry-dir is required for normal submission")
     registry_dir = os.path.abspath(args.registry_dir)
     output_dir   = os.path.abspath(args.output_dir)
     script_path  = os.path.abspath(args.script)
@@ -497,16 +444,14 @@ def main():
 
     work_dir = os.path.abspath(args.work_dir) if args.work_dir \
                else os.path.join(output_dir, "_submit")
-    os.makedirs(work_dir, exist_ok=True)
+    os.makedirs(work_dir,   exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- Resolve env-setup lines (precedence: --no-env-setup > file > --env-setup > default) ---
     if args.env_setup_file and not os.path.isfile(os.path.abspath(args.env_setup_file)):
         print(f"ERROR: --env-setup-file not found: {args.env_setup_file}", file=sys.stderr)
         sys.exit(1)
-    env_setup_lines: list[str] = _resolve_env_setup(args)
+    env_setup_lines = _resolve_env_setup(args)
 
-    # one timestamped run dir keeps things tidy when re-running
     stamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir  = os.path.join(work_dir, f"run_{stamp}")
     chunks_d = os.path.join(run_dir, "chunks")
@@ -515,12 +460,11 @@ def main():
     for d in (chunks_d, sbatch_d, log_d):
         os.makedirs(d, exist_ok=True)
 
-    # build passthrough arg list for postprocess_showers.py
-    post_args: list[str] = _build_post_args(args)
+    post_args = _build_post_args(args)
 
-    submitted       = 0
-    jobs_per_pdg    = {}
-    submission_log  = []
+    submitted      = 0
+    jobs_per_pdg   = {}
+    submission_log = []
 
     print(f"Registry dir  : {registry_dir}")
     print(f"Output dir    : {output_dir}")
@@ -529,22 +473,25 @@ def main():
     print(f"Chunk size    : {args.chunk_size}")
     print(f"Run dir       : {run_dir}")
     print(f"PDGs          : {args.pdgs}")
-    print(f"Particles     : {args.particles if args.particles else 'electrons muons photons (all)'}")
+    print(f"Zone boundary : {args.zone_boundary:.0f} m")
+    print(f"Particles     : {args.particles or 'electrons muons photons (all)'}")
+    for pkey in (args.particles or ["electrons", "muons", "photons"]):
+        dx_near = getattr(args, f"{pkey}_dx_near", None)
+        dx_far  = getattr(args, f"{pkey}_dx_far",  None)
+        nmax    = getattr(args, f"{pkey}_nmax",    None)
+        print(f"  {pkey:<10}: dx_near={dx_near}  dx_far={dx_far}  nmax={nmax}")
     if env_setup_lines:
         print(f"Env setup     : {len(env_setup_lines)} line(s)")
-        for ln in env_setup_lines:
-            print(f"                  {ln}")
     else:
         print("Env setup     : (none)")
     if args.test_run:
-        print(f"TEST RUN      : submitting only 1 job per PDG "
-              f"(first {args.chunk_size} parquets each)")
+        print(f"TEST RUN      : 1 job per PDG (first {args.chunk_size} parquets)")
     print()
 
     for pdg in args.pdgs:
         registry_path = os.path.join(registry_dir, f"registry_pdg_{pdg}.txt")
         if not os.path.exists(registry_path):
-            print(f"  [pdg={pdg}] no registry found at {registry_path} — skipping")
+            print(f"  [pdg={pdg}] no registry found — skipping")
             continue
 
         paths = _read_registry(registry_path)
@@ -552,7 +499,6 @@ def main():
             print(f"  [pdg={pdg}] registry is empty — skipping")
             continue
 
-        # test-run: only the first chunk from each registry
         if args.test_run:
             paths = paths[: args.chunk_size]
 
@@ -571,28 +517,17 @@ def main():
                 chunks_d, f"pdg_{pdg}_chunk_{chunk_id:04d}.txt")
             _write_chunk_list(chunk_list_path, chunk_paths)
 
-            job_name = f"pp_pdg{pdg}_c{chunk_id:04d}"
-            sbatch_path = os.path.join(
-                sbatch_d, f"{job_name}.sbatch")
+            job_name    = f"pp_pdg{pdg}_c{chunk_id:04d}"
+            sbatch_path = os.path.join(sbatch_d, f"{job_name}.sbatch")
 
             _write_sbatch_script(
-                sbatch_path     = sbatch_path,
-                job_name        = job_name,
-                log_dir         = log_d,
-                partition       = args.partition,
-                time_limit      = args.time,
-                mem             = args.mem,
-                cpus            = args.cpus,
-                account         = args.account,
-                extra_sbatch    = args.extra_sbatch,
-                env_setup       = env_setup_lines,
-                python_exec     = args.python,
-                script_path     = script_path,
-                chunk_list_path = chunk_list_path,
-                incident_pdg    = pdg,
-                chunk_id        = chunk_id,
-                output_dir      = output_dir,
-                post_args       = post_args,
+                sbatch_path=sbatch_path, job_name=job_name, log_dir=log_d,
+                partition=args.partition, time_limit=args.time, mem=args.mem,
+                cpus=args.cpus, account=args.account, extra_sbatch=args.extra_sbatch,
+                env_setup=env_setup_lines, python_exec=args.python,
+                script_path=script_path, chunk_list_path=chunk_list_path,
+                incident_pdg=pdg, chunk_id=chunk_id,
+                output_dir=output_dir, post_args=post_args,
             )
 
             if args.dry_run:
@@ -604,10 +539,8 @@ def main():
             else:
                 try:
                     out = subprocess.check_output(
-                        ["sbatch", sbatch_path],
-                        stderr=subprocess.STDOUT,
+                        ["sbatch", sbatch_path], stderr=subprocess.STDOUT,
                     ).decode().strip()
-                    # parse "Submitted batch job <id>"
                     jobid = out.rsplit()[-1] if out else ""
                     print(f"    submitted {job_name}  (jobid={jobid})")
                     submission_log.append({
@@ -628,7 +561,6 @@ def main():
         if args.max_jobs is not None and submitted >= args.max_jobs:
             break
 
-    # write a single manifest
     manifest_path = os.path.join(run_dir, "submitted.tsv")
     with open(manifest_path, "w") as f:
         f.write("pdg\tchunk_id\tjobid\tsbatch\n")
