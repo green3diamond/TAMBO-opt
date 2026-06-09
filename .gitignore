@@ -164,8 +164,8 @@ cython_debug/
 .vscode
 data
 notebooks
-results
-log
+results/
+logs/
 run
 conf-test
 plots
@@ -173,3 +173,4 @@ uv.lock
 cpp
 logs
 allshowers/checkpoints/
+output

@@ -2,8 +2,8 @@
 
 '''
 python /n/home04/hhanif/PointCountFM/pointcountfm/from_showers_to_layer.py \
-  --input /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations/all_shower_processed_step1_v3/merged_all_showers.h5 \
-  --output /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations/all_shower_processed_step1_v3/for_layers.h5 \
+  --input /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3/combined_electrons.h5  \
+  --output /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/h5_files_v3/combined_electrons_for_layers.h5  \
   --num-layers 24 
 '''
 
@@ -47,7 +47,7 @@ def calc_num_points_per_layer_h5(h5_dataset, start: int, stop: int, num_layers: 
 
     for i, global_i in enumerate(range(start, stop)):
         shower = np.array(h5_dataset[global_i])
-        points = shower.reshape(-1, 4)                          # (n_particles, 4): x,y,z,e
+        points = shower.reshape(-1, 5)                          # (n_particles, 5): x,y,z,e,t
         layer_idx = np.clip(
             (points[:, 2] + 0.1).astype(np.int32), 0, num_layers - 1
         )
