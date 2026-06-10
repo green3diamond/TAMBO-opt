@@ -53,6 +53,10 @@ class Generator(nn.Module):
         self.max_points = run_params["data"].get("max_num_points", 6016)
         self.expects_angles = run_params["model"]["dim_inputs"][-1] > 1
 
+        # Auto-detect time mode from config — no CLI flag needed.
+        # If the model was trained with samples_time_trafo, dim_inputs[0] == 4.
+        self.with_time = run_params["model"]["dim_inputs"][0] == 4
+
     def __init_model(
         self, params: dict[str, Any], state_file: str, solver: str = "heun"
     ) -> None:
@@ -81,10 +85,20 @@ class Generator(nn.Module):
         self.samples_coordinate_trafo = compose(params.get("samples_coordinate_trafo"))
         self.cond_trafo = compose(params.get("cond_trafo"))
 
+        # Time trafo — only present when model was trained with time
+        if params.get("samples_time_trafo") is not None:
+            self.samples_time_trafo = compose(params.get("samples_time_trafo"))
+        else:
+            self.samples_time_trafo = None
+
         state = torch.load(trafo_file, map_location="cpu", weights_only=True)
         self.samples_energy_trafo.load_state_dict(state["samples_energy_trafo"])
         self.samples_coordinate_trafo.load_state_dict(state["samples_coordinate_trafo"])
         self.cond_trafo.load_state_dict(state["cond_trafo"])
+
+        # Load time trafo state if saved in the trafos file
+        if self.samples_time_trafo is not None and "samples_time_trafo" in state:
+            self.samples_time_trafo.load_state_dict(state["samples_time_trafo"])
 
     def forward(
         self,
@@ -114,22 +128,46 @@ class Generator(nn.Module):
             mask[i, :total_points, 0] = True
         layer = layer.to(condition.device)
         mask = mask.to(condition.device)
-        raw_samples = self.flow.sample(
-            shape=(condition.shape[0], self.max_points, 3),
-            num_timesteps=self.num_timesteps,
-            cond=condition,
-            num_points=num_points,
-            layer=layer,
-            mask=mask,
-            label=label,
-        )
-        samples = torch.zeros(
-            (condition.shape[0], self.max_points, 4), device=raw_samples.device
-        )
-        samples[:, :, :2] = self.samples_coordinate_trafo.inverse(raw_samples[:, :, :2])
-        samples[:, :, 2] = layer.squeeze(2)
-        samples[:, :, 3] = self.samples_energy_trafo.inverse(raw_samples[:, :, 2])
-        samples[~mask.repeat(1, 1, 4)] = 0
+
+        if self.with_time:
+            # Sample 4 features: x, y, e, t
+            raw_samples = self.flow.sample(
+                shape=(condition.shape[0], self.max_points, 4),
+                num_timesteps=self.num_timesteps,
+                cond=condition,
+                num_points=num_points,
+                layer=layer,
+                mask=mask,
+                label=label,
+            )
+            # Reconstruct 5-column output: x, y, z(layer), e, t
+            samples = torch.zeros(
+                (condition.shape[0], self.max_points, 5), device=raw_samples.device
+            )
+            samples[:, :, :2] = self.samples_coordinate_trafo.inverse(raw_samples[:, :, :2])
+            samples[:, :, 2] = layer.squeeze(2)
+            samples[:, :, 3] = self.samples_energy_trafo.inverse(raw_samples[:, :, 2])
+            samples[:, :, 4] = self.samples_time_trafo.inverse(raw_samples[:, :, 3])
+            samples[~mask.repeat(1, 1, 5)] = 0
+        else:
+            # Original: sample 3 features: x, y, e
+            raw_samples = self.flow.sample(
+                shape=(condition.shape[0], self.max_points, 3),
+                num_timesteps=self.num_timesteps,
+                cond=condition,
+                num_points=num_points,
+                layer=layer,
+                mask=mask,
+                label=label,
+            )
+            # Reconstruct 4-column output: x, y, z(layer), e
+            samples = torch.zeros(
+                (condition.shape[0], self.max_points, 4), device=raw_samples.device
+            )
+            samples[:, :, :2] = self.samples_coordinate_trafo.inverse(raw_samples[:, :, :2])
+            samples[:, :, 2] = layer.squeeze(2)
+            samples[:, :, 3] = self.samples_energy_trafo.inverse(raw_samples[:, :, 2])
+            samples[~mask.repeat(1, 1, 4)] = 0
         return samples
 
 
