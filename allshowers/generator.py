@@ -204,7 +204,10 @@ def generate(
     ):
         print_time(f"start batch {i:3d}")
         batch = [e.to(device) if e is not None else None for e in batch]
-        samples_l = generator(*batch).cpu()
+        # no_grad: sampling never needs autograd, and without it each batch's
+        # ODE-solver graph stays alive on the GPU (OOMs at large max_points).
+        with torch.no_grad():
+            samples_l = generator(*batch).detach().cpu()
         samples.append(samples_l)
     samples = torch.cat(samples)
     print_time("generation done")

@@ -57,6 +57,7 @@ class FlexEncoderLayer(nn.Module):
         dim_feedforward: int = 2048,
         activation: str | torch.nn.Module = "relu",
         dropout: float = 0.0,
+        pre_ln: bool = False,
     ) -> None:
         if dim_embedding % num_head != 0:
             raise ValueError(
@@ -67,6 +68,7 @@ class FlexEncoderLayer(nn.Module):
         self.num_head = num_head
         self.dim_embedding = dim_embedding
         self.dim_head = dim_embedding // num_head
+        self.pre_ln = pre_ln
 
         activation_classes = {
             "relu": nn.ReLU,
@@ -127,8 +129,15 @@ class FlexEncoderLayer(nn.Module):
         x: Tensor,
         mask: BlockMask,
     ) -> Tensor:
-        x = self.layer_norm1(x + self.multihead_attention(x, mask=mask))
-        x = self.layer_norm2(x + self.feedforward(x))
+        # Both LN placements share identical parameter names, so a checkpoint
+        # loads into either silently — it must run with the placement it was
+        # trained with (post-LN: Apr-era checkpoints; pre-LN: May-era ones).
+        if self.pre_ln:
+            x = x + self.multihead_attention(self.layer_norm1(x), mask=mask)
+            x = x + self.feedforward(self.layer_norm2(x))
+        else:
+            x = self.layer_norm1(x + self.multihead_attention(x, mask=mask))
+            x = self.layer_norm2(x + self.feedforward(x))
         return x
 
 
@@ -147,6 +156,7 @@ class Transformer(nn.Module):
         num_layer_cond: int = -1,
         num_particles: int = 1,
         dropout: float = 0.0,
+        pre_ln: bool = False,
     ) -> None:
         super().__init__()
         self.num_layer_cond = num_layer_cond
@@ -184,6 +194,7 @@ class Transformer(nn.Module):
                     dim_feedforward=dim_feedforward,
                     activation=activation_module,
                     dropout=dropout,
+                    pre_ln=pre_ln,
                 )
                 for _ in range(num_blocks)
             ]
